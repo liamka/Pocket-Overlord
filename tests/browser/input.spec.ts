@@ -30,6 +30,19 @@ const state = (page: Page) => page.evaluate(() => {
   return { x: renderer.camera.x, y: renderer.camera.y, zoom: renderer.camera.zoom, commands };
 });
 
+test('summoning captures the current screen corners after zooming and panning', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:ufo'; });
+  await page.mouse.move(400, 250); await page.mouse.wheel(0, -180);
+  await page.mouse.down({ button: 'right' }); await page.mouse.move(450, 280, { steps: 3 }); await page.mouse.up({ button: 'right' });
+  await page.mouse.click(400, 250);
+  const result = await page.evaluate(() => {
+    const { renderer, commands } = (globalThis as InputGlobal).inputFixture;
+    const camera = renderer.camera, first = camera.screenToWorld(0, 0), last = camera.screenToWorld(camera.width, camera.height);
+    return { command: commands.at(-1), viewport: { left: first.x, top: first.y, right: last.x, bottom: last.y } };
+  });
+  expect(result.command).toMatchObject({ kind: 'use-tool', toolId: 'core:ufo', viewport: result.viewport });
+});
+
 test('applies one tool on release and tolerates small click movements', async ({ page }) => {
   const before = await state(page);
   await page.mouse.move(400, 250); await page.mouse.down();

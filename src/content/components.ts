@@ -8,12 +8,15 @@ export const componentValidators: Record<keyof CoreComponents, Validator> = {
   combustible: v => number(v.fuel, 0, 1e6) && number(v.ignition, 0, 1e6),
   thermal: v => number(v.temperature, 0, 1e8) && number(v.wetness, 0, 1) && bool(v.burning),
   motion: v => number(v.vx) && number(v.vy) && number(v.speed, 0, 100) && number(v.heading) && number(v.decisionIn),
-  person: v => (v.race === undefined || isRace(v.race)) && number(v.age, 0, 1e8) && ['a', 'b'].includes(String(v.sex)) && (v.homeId === null || integer(v.homeId, 1)) && number(v.buildIn) && number(v.reproduceIn),
+  person: v => (v.race === undefined || isRace(v.race)) && number(v.age, 0, 1e8) && ['a', 'b'].includes(String(v.sex)) && (v.homeId === null || integer(v.homeId, 1)) && number(v.buildIn) && number(v.reproduceIn)
+    && (v.animation === undefined || record(v.animation) && number(v.animation.stride, 0, Math.PI * 2) && number(v.animation.moving, 0, 1)
+      && number(v.animation.heading, -Math.PI, Math.PI) && number(v.animation.work, 0, 1)),
   citizen: v => reference(v.villageId) && reference(v.partnerId) && Array.isArray(v.parents) && v.parents.length <= 2 && v.parents.every(id => integer(id, 1))
-    && number(v.hunger, 0, 100) && number(v.pregnancy, 0, 8) && reference(v.fatherId) && (Number(v.pregnancy) === 0 || v.fatherId !== null) && ['idle', 'farm', 'eat', 'visit', 'fight', 'repair', 'migrate'].includes(String(v.task))
+    && number(v.hunger, 0, 100) && number(v.pregnancy, 0, 8) && reference(v.fatherId) && (Number(v.pregnancy) === 0 || v.fatherId !== null) && ['idle', 'farm', 'eat', 'visit', 'fight', 'repair', 'build', 'migrate'].includes(String(v.task))
     && reference(v.targetId) && Array.isArray(v.path) && v.path.length <= WORLD_WIDTH * WORLD_HEIGHT && v.path.every(point) && number(v.reconsiderIn) && number(v.attackIn, 0, 10)
     && (v.task === 'repair' ? v.targetId === null && record(v.repair) && integer(v.repair.tile, 0, WORLD_WIDTH * WORLD_HEIGHT - 1) && number(v.repair.remaining, 0.001, ROAD_REPAIR_SECONDS) : v.repair === null),
-  dwelling: v => (v.race === undefined || isRace(v.race)) && integer(v.capacity, 1, 300) && reference(v.villageId),
+  dwelling: v => (v.race === undefined || isRace(v.race)) && integer(v.capacity, 1, 300) && reference(v.villageId)
+    && (v.construction === undefined || record(v.construction) && number(v.construction.progress, 0, 1) && integer(v.construction.struckAt, -1)),
   farm: v => integer(v.villageId, 1) && number(v.growth, 0, 1) && integer(v.harvests),
   caravan: v => integer(v.fromId, 1) && reference(v.toId) && v.toId !== v.fromId && number(v.food, 0, 12)
     && Array.isArray(v.path) && v.path.length <= WORLD_WIDTH * WORLD_HEIGHT && v.path.every(point) && integer(v.next, 0, v.path.length)

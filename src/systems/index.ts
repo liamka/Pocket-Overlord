@@ -7,6 +7,7 @@ import { landscape } from './landscape';
 import { caravans } from './caravans';
 import { ferries } from './ferries';
 import { migrations } from './migration';
+import { construction } from './construction';
 
 /** Ordering is part of the save/replay contract. New systems get explicit positions. */
 export const defaultSystems: readonly System[] = [
@@ -24,6 +25,7 @@ export const defaultSystems: readonly System[] = [
   { id: 'core:caravans', after: ['core:diplomacy'], update: caravans },
   { id: 'core:migrations', after: ['core:caravans'], update: migrations },
   { id: 'core:intentions', after: ['core:migrations'], update: intentions },
-  { id: 'core:explosives', after: ['core:intentions'], update: explosives },
+  { id: 'core:construction', after: ['core:intentions'], update: construction },
+  { id: 'core:explosives', after: ['core:construction'], update: explosives },
   { id: 'core:events', after: ['core:explosives'], update: processEvents },
 ];

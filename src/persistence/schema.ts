@@ -141,6 +141,9 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
   }],
   // Existing saucers are already in flight; only new summons have an arrival path.
   [22, save => ({ ...save, version: 23 })],
+  // Existing homes stay complete; new construction and resident poses are optional state.
+  [23, save => ({ ...save, version: 24 })],
+  [24, save => ({ ...save, version: 25 })],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {

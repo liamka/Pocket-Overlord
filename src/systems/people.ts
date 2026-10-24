@@ -1,7 +1,7 @@
 import type { World } from '../core/world';
 import { isRoadSurface, POPULATION_LIMIT, SOCIAL_EVENT_RATE, type Entity, type Vec2 } from '../core/types';
 import { findPath, findShorePath } from './navigation';
-import { assignHouse, atWar, buildHouse, villageOf } from './society';
+import { assignHouse, atWar, villageOf } from './society';
 import { RACES, raceOf } from '../core/races';
 import { campaignObjective } from './diplomacy';
 import { assignRepair, continueRepair, roadRepairs } from './road-repair';
@@ -9,6 +9,8 @@ import { seasonAt } from '../core/seasons';
 import { aboardFerry, waitingForFerry } from '../core/ferries';
 import { approachFerry } from './ferries';
 import { reservedBeds } from './migration';
+import { recordResidentMovement } from '../core/resident-animation';
+import { assignConstruction, continueConstruction, startConstruction } from './construction';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const endangered = (world: World, p: Vec2): boolean => world.nearby(p, 7).some(e => e.components.explosive || e.components.thermal?.burning);
@@ -44,10 +46,11 @@ function swim(world: World, entity: Entity, dt: number): void {
 export function movement(world: World, dt: number): void {
   for (const entity of world.query('motion', 'position')) {
     const { motion: m, position: p, person, citizen } = entity.components;
+    const previous = { ...p! };
     if (person) person.age += dt * 0.3;
     m!.decisionIn -= dt;
-    if (person && approachFerry(world, entity, dt)) continue;
-    if (person && !world.terrain.isLand(p!.x, p!.y)) { swim(world, entity, dt); continue; }
+    if (person && approachFerry(world, entity, dt)) { recordResidentMovement(entity, previous, dt, aboardFerry(world, entity.id)); continue; }
+    if (person && !world.terrain.isLand(p!.x, p!.y)) { swim(world, entity, dt); recordResidentMovement(entity, previous, dt); continue; }
     let speed = m!.speed * (person && person.age < 18 ? 0.7 : 1);
     if (isRoadSurface(world.terrain.at(p!.x, p!.y))) speed *= 1.4;
     else speed *= world.terrain.biomeAt(p!.x, p!.y).walking;
@@ -101,6 +104,7 @@ export function movement(world: World, dt: number): void {
       }
     }
     m!.vx *= Math.exp(-6 * dt); m!.vy *= Math.exp(-6 * dt); world.spatial.update(entity);
+    recordResidentMovement(entity, previous, dt);
   }
 }
 
@@ -147,8 +151,8 @@ export function settlement(world: World): void {
         && (residents.get(e.id)?.length ?? 0) + (reserved.get(e.id) ?? 0) < e.components.dwelling.capacity);
       if (home) moveIn(entity, home);
       else if (person.age >= 18 && person.buildIn <= 0) {
-        const site = findSite(world, position, 6, 12, 1.3), house = site && buildHouse(world, site, raceOf(entity));
-        if (house) { moveIn(entity, house); world.visual({ kind: 'build', ...site, radius: 2 }); }
+        const site = findSite(world, position, 6, 12, 1.3), house = site && startConstruction(world, site, entity);
+        if (house) moveIn(entity, house);
         person.buildIn = world.rng.range(7, 12) * RACES[raceOf(entity)].construction;
       }
     }
@@ -180,12 +184,12 @@ export function settlement(world: World): void {
     let members = residents.get(home.id)!;
     if (partner && partner.components.person!.homeId !== home.id && members.length + (reserved.get(home.id) ?? 0) < home.components.dwelling!.capacity) moveIn(partner, home);
     // Crowded families build their own home before trying to have a child.
-    if (partner && (members.length >= home.components.dwelling!.capacity || partner.components.person!.homeId !== home.id) && person.buildIn <= 0) {
-      const site = findSite(world, village, 11, 16, 1.3), newHome = site && buildHouse(world, site, raceOf(entity));
+    if (partner && !home.components.dwelling!.construction && (members.length >= home.components.dwelling!.capacity || partner.components.person!.homeId !== home.id) && person.buildIn <= 0) {
+      const site = findSite(world, village, 11, 16, 1.3), newHome = site && startConstruction(world, site, entity);
       if (newHome) { newHome.components.dwelling!.villageId = village.id; moveIn(entity, newHome); moveIn(partner, newHome); home = newHome; members = residents.get(home.id)!; }
       person.buildIn = 12 * RACES[raceOf(entity)].construction;
     }
-    const safe = !endangered(world, home.components.position!) && !home.components.thermal?.burning;
+    const safe = !home.components.dwelling!.construction && !endangered(world, home.components.position!) && !home.components.thermal?.burning;
     if (citizen.pregnancy > 0) {
       citizen.pregnancy = Math.max(0.01, citizen.pregnancy - 0.5);
       if (citizen.pregnancy > 0.01 || !safe || members.length + (reserved.get(home.id) ?? 0) >= home.components.dwelling!.capacity || world.population >= POPULATION_LIMIT) continue;
@@ -225,6 +229,7 @@ export function intentions(world: World): void {
     if (c.hunger >= 90) world.events.push({ kind: 'damage', target: entity.id, amount: 0.75 });
     if (person.age >= stats.lifespan) { world.events.push({ kind: 'damage', target: entity.id, amount: entity.components.health!.current }); continue; }
     if (c.task === 'migrate' || aboardFerry(world, entity.id) || waitingForFerry(world, entity)) continue;
+    if (continueConstruction(world, entity)) continue;
     if (continueRepair(world, entity, repairs)) continue;
     if (!world.terrain.isLand(position.x, position.y)) continue;
     if (c.hunger < 30 && c.task !== 'fight' && entity.components.health && !entity.components.thermal?.burning) entity.components.health.current = Math.min(entity.components.health.max, entity.components.health.current + stats.recovery);
@@ -253,7 +258,7 @@ export function intentions(world: World): void {
     }
     if (!target) {
       const formerField = c.task === 'farm' ? c.targetId : null;
-      if (assignRepair(world, entity, repairs)) {
+      if (assignConstruction(world, entity) || assignRepair(world, entity, repairs)) {
         if (formerField !== null) assignments.set(formerField, Math.max(0, (assignments.get(formerField) ?? 0) - 1));
         continue;
       }

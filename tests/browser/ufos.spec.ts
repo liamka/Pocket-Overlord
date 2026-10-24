@@ -49,7 +49,7 @@ test('the saucer animates through charge, beam and departure, freezes on pause a
   expect(result).toMatchObject({ frozen: true, restored: true, unchanged: true, greenAtImpact: true });
 });
 
-test('the real destruction toolbar spawns saucers over water and preserves them and the selected tool on reload', async ({ page }) => {
+test('the real toolbar summons an off-screen saucer and preserves its arrival and the selected tool on reload', async ({ page }) => {
   const world = flatWorld(); world.paused = true; world.terrain.set(24, 24, Terrain.DeepWater);
   await page.route('**/ufo-storage-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Storage setup</title>' }));
   await page.goto('/ufo-storage-fixture');
@@ -69,6 +69,9 @@ test('the real destruction toolbar spawns saucers over water and preserves them 
   await expect(button).toBeVisible(); await button.click();
   await expect(page.locator('#tool-name')).toHaveText('Flying saucer');
   const point = await page.locator('#world').evaluate(canvas => ({ x: canvas.clientWidth / 2, y: (canvas.clientHeight - 200) / 2 }));
+  await page.locator('#world').hover({ position: point });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const before = await page.locator('#world').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   await page.locator('#world').click({ position: point });
   const readSave = () => page.evaluate(() => new Promise<WorldSnapshot>((resolve, reject) => {
     const open = indexedDB.open('little-world', 1); open.onerror = () => reject(open.error);
@@ -79,13 +82,17 @@ test('the real destruction toolbar spawns saucers over water and preserves them 
   }));
   await expect.poll(async () => (await readSave()).entities.filter(e => e.typeId === UFO_ID).length).toBe(1);
   const saved = await readSave(), saucer = saved.entities.find(e => e.typeId === UFO_ID)!;
-  expect(saucer.components.position!.x).toBeCloseTo(24, 1);
-  expect(saucer.components.position!.y).toBeCloseTo(24, 1); expect(saved.paused).toBe(true);
+  expect(saucer.components.ufo!.goalX).toBeCloseTo(24, 1);
+  expect(saucer.components.ufo!.goalY).toBeCloseTo(24, 1); expect(saved.paused).toBe(true);
+  expect(saucer.components.ufo!.arrival).toMatchObject({ elapsed: 0 });
+  expect(await page.locator('#world').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(before);
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
   await expect(button).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-category="destruction"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(async () => (await readSave()).entities.find(e => e.typeId === UFO_ID)).toEqual(saucer);
+  await page.locator('#time-toggle').click();
+  await expect.poll(async () => (await readSave()).entities.find(e => e.typeId === UFO_ID)?.components.ufo?.arrival).toBeUndefined();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('#language-select').selectOption('ru');
   await expect(page.getByRole('button', { name: 'Летающая тарелка', exact: true })).toBeAttached();

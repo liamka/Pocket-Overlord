@@ -1,5 +1,6 @@
 import './style.css';
 import { createRegistry } from './content/defaults';
+import { setUfoViewport } from './content/ufos';
 import { FixedClock } from './core/clock';
 import { World } from './core/world';
 import { SIMULATION_SPEEDS, type GameCommand, type SimulationSpeed } from './core/types';
@@ -114,6 +115,9 @@ let lastUI = 0;
 function frame(now: number): void {
   if (ready && !document.hidden) {
     input.update(now);
+    const camera = renderer.camera;
+    const topLeft = camera.screenToWorld(0, 0), bottomRight = camera.screenToWorld(camera.width, camera.height);
+    setUfoViewport(world, { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y });
     clock.advance(now, !world.paused && !modalOpen(), () => world.step(), world.speed);
     renderer.draw(world, now, ui.currentLanguage);
     if (now - lastUI > 150) { updateUI(); lastUI = now; }

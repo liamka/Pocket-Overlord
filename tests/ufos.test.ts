@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { UFO, UFO_ID, ufoPose } from '../src/content/ufos';
+import { UFO, UFO_ID, ufoGroundPosition, ufoPose } from '../src/content/ufos';
 import { World } from '../src/core/world';
-import { Terrain } from '../src/core/types';
+import { SAVE_VERSION, Terrain } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { applyEvent } from '../src/systems/effects';
 import { advance, flatWorld } from './helpers';
@@ -13,6 +13,57 @@ function attackWorld() {
 }
 
 describe('flying saucers', () => {
+  it.each([0, 2, 8, 5])('enters from an off-screen corner and brakes at the click before attacking (seed %i)', seed => {
+    const world = flatWorld(), point = { x: 24, y: 24 };
+    const house = world.spawn('core:house', point)!;
+    const viewport = { left: 10, top: 8, right: 38, bottom: 36 };
+    world.rng.state = seed;
+    world.command({ kind: 'use-tool', toolId: UFO_ID, ...point, viewport });
+    const saucer = [...world.query('ufo')][0], state = saucer.components.ufo!;
+    const start = ufoPose(saucer.components.position!, state);
+    expect(start.ground.x < viewport.left - 3 || start.ground.x > viewport.right + 3).toBe(true);
+    expect(start.ground.y - start.altitude < viewport.top - 3 || start.ground.y - start.altitude > viewport.bottom + 3).toBe(true);
+    const duration = state.arrival!.duration;
+    let previous = Math.hypot(start.ground.x - point.x, start.ground.y - point.y);
+    for (let i = 0; i < Math.ceil(duration * 30) && state.arrival; i++) {
+      world.step();
+      const ground = ufoGroundPosition(saucer.components.position!, state), distance = Math.hypot(ground.x - point.x, ground.y - point.y);
+      expect(distance).toBeLessThanOrEqual(previous); previous = distance;
+      expect(state.phase).toBe('cruise'); expect(house.components.health!.current).toBe(180);
+    }
+    expect(state.arrival).toBeUndefined(); expect(saucer.components.position).toEqual(point);
+    expect(state.vx).toBe(0); expect(state.vy).toBe(0);
+    world.step(); expect(state.phase).toBe('charge');
+  });
+
+  it('freezes and resumes the same approach after saving midway through the flight', () => {
+    const world = flatWorld();
+    world.command({ kind: 'use-tool', toolId: UFO_ID, x: 24, y: 24,
+      viewport: { left: -80, top: -60, right: 80, bottom: 60 } });
+    const saucer = [...world.query('ufo')][0]; advance(world, 0.6);
+    expect(saucer.components.ufo!.arrival).toBeDefined();
+    world.paused = true; const saved = world.snapshot(), pose = ufoPose(saucer.components.position!, saucer.components.ufo!);
+    advance(world, 1); expect(world.snapshot()).toEqual(saved);
+    const restored = new World(world.seed, world.registry, decodeSave(JSON.parse(JSON.stringify(saved)), world.registry));
+    const copy = restored.entities.get(saucer.id)!;
+    expect(ufoPose(copy.components.position!, copy.components.ufo!)).toEqual(pose);
+    world.paused = restored.paused = false; advance(world, 5); advance(restored, 5);
+    expect(restored.snapshot()).toEqual(world.snapshot());
+  });
+
+  it('validates arrival paths and loads existing saucers without making them arrive again', () => {
+    const { world } = attackWorld(), old = world.snapshot(); old.version = 22;
+    expect(decodeSave(old, world.registry)).toEqual({ ...old, version: SAVE_VERSION });
+    world.command({ kind: 'use-tool', toolId: UFO_ID, x: 12, y: 12 });
+    const arriving = [...world.query('ufo')].at(-1)!;
+    for (const [key, value] of [['fromX', NaN], ['fromY', Infinity], ['duration', 0], ['elapsed', 10]]) {
+      const saved = world.snapshot();
+      Object.assign(saved.entities.find(e => e.id === arriving.id)!.components.ufo!.arrival!, { [key]: value });
+      expect(() => decodeSave(saved, world.registry)).toThrow();
+    }
+    expect(decodeSave(world.snapshot(), world.registry)).toEqual(world.snapshot());
+  });
+
   it('spawns multiple independent saucers above land, buildings and water without blocking residents', () => {
     const world = flatWorld(); world.terrain.set(12, 12, Terrain.DeepWater);
     world.spawn('core:house', { x: 24, y: 24 });

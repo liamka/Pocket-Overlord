@@ -6,21 +6,39 @@ import type { World } from '../core/world';
 
 export const UFO_ID = 'core:ufo';
 export const UFO = { speed: 11, altitude: 9, health: 900, charge: 0.55, beam: 1.1, recover: 0.55,
-  contact: 0.16, radius: 2.6, cooldown: 2.2 } as const;
+  contact: 0.16, radius: 2.6, cooldown: 2.2, lifetime: 35 } as const;
+interface Departure {
+  fromX: number; fromY: number; toX: number; toY: number;
+  vx: number; vy: number; elapsed: number; duration: number;
+}
 export interface UfoState {
   age: number; offset: number; vx: number; vy: number;
   goalX: number; goalY: number; targetId: number | null; thinkIn: number; attackIn: number;
   phase: 'cruise' | 'charge' | 'beam' | 'recover'; phaseTime: number;
   arrival?: { fromX: number; fromY: number; elapsed: number; duration: number };
+  returnPoint?: Vec2;
+  departure?: Departure;
 }
 declare module '../core/types' { interface ComponentMap { ufo: UfoState } }
 
+const viewports = new WeakMap<World, WorldViewport>();
+/** The host supplies camera bounds without making rendering advance the simulation. */
+export function setUfoViewport(world: World, viewport: WorldViewport): void { viewports.set(world, viewport); }
+const currentView = (world: World): WorldViewport => viewports.get(world)
+  ?? { left: 0, top: 0, right: world.terrain.width, bottom: world.terrain.height };
 const prey = (entity: Entity): boolean => !!entity.components.health && !!entity.components.combustible
   && !entity.components.explosive;
 const ease = (t: number): number => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
 
 /** A saved world-space path remains fixed when the camera pans or the game reloads. */
 export function ufoGroundPosition(position: Vec2, state: UfoState): Vec2 {
+  if (state.departure) {
+    const d = state.departure, t = Math.min(1, d.elapsed / d.duration);
+    // Preserve the initial velocity, then accelerate away without braking at the screen edge.
+    const inertia = d.duration * t * (1 - t) ** 2;
+    return { x: d.fromX + (d.toX - d.fromX) * t * t + d.vx * inertia,
+      y: d.fromY + (d.toY - d.fromY) * t * t + d.vy * inertia };
+  }
   if (!state.arrival) return position;
   const { fromX, fromY, elapsed, duration } = state.arrival;
   const remaining = (1 - Math.min(1, elapsed / duration)) ** 3;
@@ -55,6 +73,8 @@ function summon(world: World, point: Vec2, viewport?: WorldViewport): string | v
   const fromY = corner < 2 ? view.top - margin : view.bottom + UFO.altitude + margin;
   const distance = Math.hypot(point.x - fromX, point.y - fromY);
   const state = entity.components.ufo!;
+  setUfoViewport(world, view);
+  state.returnPoint = { x: fromX, y: fromY };
   state.arrival = { fromX, fromY, elapsed: 0, duration: Math.max(1.5, Math.min(4, distance / (UFO.speed * 3))) };
   locateArrival(world, entity);
 }
@@ -69,6 +89,47 @@ function locateArrival(world: World, entity: Entity): void {
   const speed = Math.min(UFO.speed, distance * 3 / arrival.duration * (1 - arrival.elapsed / arrival.duration) ** 2);
   state.vx = dx / distance * speed; state.vy = dy / distance * speed;
   world.spatial.update(entity);
+}
+
+function depart(world: World, entity: Entity, direction?: Vec2): void {
+  const state = entity.components.ufo!, from = ufoGroundPosition(entity.components.position!, state), view = currentView(world);
+  const back = state.returnPoint ?? { x: from.x < world.terrain.width / 2 ? -6 : world.terrain.width + 6,
+    y: from.y < world.terrain.height / 2 ? -6 : world.terrain.height + UFO.altitude + 6 };
+  let dx = direction?.x ?? back.x - from.x, dy = direction?.y ?? back.y - from.y;
+  if (Math.hypot(dx, dy) < 0.001) { dx = -1; dy = -1; }
+  const edgeX = dx < 0 ? Math.min(0, view.left) - 6 : Math.max(world.terrain.width, view.right) + 6;
+  const edgeY = dy < 0 ? Math.min(0, view.top) - 6 : Math.max(world.terrain.height, view.bottom) + UFO.altitude + 6;
+  const scale = Math.min(dx ? (edgeX - from.x) / dx : Infinity, dy ? (edgeY - from.y) / dy : Infinity);
+  const toX = from.x + dx * scale, toY = from.y + dy * scale;
+  state.departure = { fromX: from.x, fromY: from.y, toX, toY, vx: state.vx, vy: state.vy, elapsed: 0,
+    duration: Math.max(1.5, Math.min(4, Math.hypot(toX - from.x, toY - from.y) / (UFO.speed * 3))) };
+  state.targetId = null;
+  state.phase = state.phase === 'beam' || state.phase === 'charge' ? 'recover' : 'cruise';
+  state.phaseTime = 0;
+}
+
+function leave(world: World, entity: Entity, dt: number): void {
+  const state = entity.components.ufo!, d = state.departure!, p = entity.components.position!;
+  d.elapsed = Math.min(d.duration, d.elapsed + dt);
+  if (state.phase === 'recover') {
+    state.phaseTime += dt;
+    if (state.phaseTime >= UFO.recover) { state.phase = 'cruise'; state.phaseTime = 0; }
+  }
+  const ground = ufoGroundPosition(p, state), t = d.elapsed / d.duration;
+  const vx = (d.toX - d.fromX) * 2 * t / d.duration + d.vx * (1 - 4 * t + 3 * t * t);
+  const vy = (d.toY - d.fromY) * 2 * t / d.duration + d.vy * (1 - 4 * t + 3 * t * t);
+  const speed = Math.max(1, Math.hypot(vx, vy) / UFO.speed);
+  state.vx = vx / speed; state.vy = vy / speed;
+  p.x = Math.max(0, Math.min(world.terrain.width - 0.001, ground.x));
+  p.y = Math.max(0, Math.min(world.terrain.height - 0.001, ground.y));
+  world.spatial.update(entity);
+  if (d.elapsed === d.duration) {
+    const view = currentView(world);
+    if (ground.x <= view.left - 4 || ground.x >= view.right + 4
+      || ground.y <= view.top - 4 || ground.y >= view.bottom + UFO.altitude + 4) world.remove(entity.id);
+    // A player following the flight must see it continue, never disappear in the viewport.
+    else depart(world, entity, { x: d.toX - d.fromX, y: d.toY - d.fromY });
+  }
 }
 
 function wander(world: World, p: Vec2, state: UfoState): void {
@@ -95,7 +156,9 @@ function fly(world: World, dt: number): void {
     const p = entity.components.position!, state = entity.components.ufo!;
     state.age += dt; state.attackIn = Math.max(0, state.attackIn - dt);
     state.thinkIn = Math.max(0, state.thinkIn - dt);
+    if (state.departure) { leave(world, entity, dt); continue; }
     if (state.arrival) {
+      state.returnPoint ??= { x: state.arrival.fromX, y: state.arrival.fromY };
       state.arrival.elapsed = Math.min(state.arrival.duration, state.arrival.elapsed + dt);
       locateArrival(world, entity);
       if (state.arrival.elapsed === state.arrival.duration) {
@@ -104,6 +167,7 @@ function fly(world: World, dt: number): void {
       }
       continue;
     }
+    if (state.age + 1e-9 >= UFO.lifetime) { depart(world, entity); continue; }
     if (state.phase !== 'cruise') {
       const before = state.phaseTime;
       state.phaseTime += dt;
@@ -159,6 +223,13 @@ export function registerUfos(registry: Registry): void {
     && number(v.vx, -UFO.speed, UFO.speed) && number(v.vy, -UFO.speed, UFO.speed)
     && number(v.goalX, 0, WORLD_WIDTH) && number(v.goalY, 0, WORLD_HEIGHT) && reference(v.targetId)
     && number(v.thinkIn, 0, 0.4) && number(v.attackIn, 0, UFO.cooldown)
+    && (v.returnPoint === undefined || record(v.returnPoint) && number(v.returnPoint.x, -1000020, 1000020) && number(v.returnPoint.y, -1000020, 1000020))
+    && (v.departure === undefined || record(v.departure) && v.arrival === undefined && v.targetId === null
+      && (v.phase === 'cruise' || v.phase === 'recover') && number(v.age, UFO.lifetime - 1e-9, 1e8)
+      && number(v.departure.fromX, -2e6, 2e6) && number(v.departure.fromY, -2e6, 2e6)
+      && number(v.departure.toX, -2e6, 2e6) && number(v.departure.toY, -2e6, 2e6)
+      && number(v.departure.vx, -UFO.speed, UFO.speed) && number(v.departure.vy, -UFO.speed, UFO.speed)
+      && number(v.departure.duration, 1.5, 4) && number(v.departure.elapsed, 0, v.departure.duration))
     && (v.arrival === undefined || record(v.arrival) && v.phase === 'cruise' && v.targetId === null
       && number(v.arrival.fromX, -1000020, 1000020) && number(v.arrival.fromY, -1000020, 1000020)
       && number(v.arrival.duration, 1.5, 4) && number(v.arrival.elapsed, 0, v.arrival.duration))
