@@ -116,6 +116,63 @@ describe('harbors and ships', () => {
     expect(ship.components.ship!.cargo).toBe(0);
   });
 
+  it('waits clear of an occupied berth, then lets the departing ship pass before unloading', () => {
+    const world = seaWorld(), { a, b, first } = ports(world);
+    world.remove(b.id); a.components.harbor!.launchIn = 60; first.food = 0;
+    const berth = harborBerth(a), docked = launch(world, a);
+    docked.components.ship!.wait = 30;
+    const incoming = world.spawn(SHIP_ID, { x: berth.x + 12, y: berth.y })!;
+    Object.assign(incoming.components.ship!, { homeId: a.id, targetId: a.id, phase: 'returning',
+      heading: Math.PI, speed: 2.1, cargo: 8, path: [berth] });
+    const separated = () => expect(distance(docked.components.position!, incoming.components.position!)).toBeGreaterThanOrEqual(5.2);
+    tick(world, 15, separated);
+    expect(incoming.components.ship!.speed).toBe(0);
+    expect(incoming.components.ship!.cargo).toBe(8); expect(first.food).toBe(0);
+    const waiting = { ...incoming.components.position! };
+    tick(world, 2, separated);
+    expect(incoming.components.position).toEqual(waiting);
+    const loaded = new World(world.seed, world.registry, decodeSave(world.snapshot(), world.registry));
+    // Leave straight toward the waiting ship to exercise the departure lane.
+    for (const instance of [world, loaded]) Object.assign(instance.entities.get(docked.id)!.components.ship!, {
+      phase: 'sailing', wait: 0, heading: 0, path: [{ x: berth.x + 20, y: berth.y }], next: 0 });
+    for (let i = 0; i < 1200 && first.food === 0; i++) { tick(world, STEP, separated); tick(loaded, STEP); }
+    expect(first.food).toBe(8); expect(incoming.components.ship!.phase).toBe('docked');
+    expect(distance(incoming.components.position!, berth)).toBeLessThan(0.1);
+    expect(loaded.snapshot()).toEqual(world.snapshot());
+  });
+
+  it.each(['same route', 'opposite sides'])('admits arrivals from %s one at a time and keeps them separated', approach => {
+    const world = seaWorld(), { a, b, first } = ports(world);
+    world.remove(b.id); first.food = 0;
+    const berth = harborBerth(a);
+    const starts = approach === 'same route'
+      ? [8, 14, 20].map(offset => ({ x: berth.x + offset, y: berth.y }))
+      : [{ x: berth.x + 8, y: berth.y }, { x: berth.x, y: berth.y - 8 }, { x: berth.x, y: berth.y + 8 }];
+    const fleet = starts.map((start, i) => {
+      const ship = world.spawn(SHIP_ID, start)!;
+      Object.assign(ship.components.ship!, { homeId: a.id, targetId: a.id, phase: 'returning',
+        heading: Math.atan2(berth.y - start.y, berth.x - start.x), speed: 2.1, cargo: 4 + i, path: [berth] });
+      return ship;
+    });
+    const arrivals: number[] = [];
+    for (let i = 0; i < 1800 && arrivals.length < fleet.length; i++) {
+      tick(world, STEP);
+      for (let j = 0; j < fleet.length; j++) {
+        if (!world.entities.has(fleet[j].id)) continue;
+        for (let k = j + 1; k < fleet.length; k++) {
+          if (!world.entities.has(fleet[k].id)) continue;
+          expect(distance(fleet[j].components.position!, fleet[k].components.position!)).toBeGreaterThanOrEqual(5.2);
+        }
+        if (fleet[j].components.ship!.cargo === 0 && !arrivals.includes(fleet[j].id)) {
+          arrivals.push(fleet[j].id);
+          world.remove(fleet[j].id);
+        }
+      }
+    }
+    expect(arrivals).toEqual(fleet.map(ship => ship.id));
+    expect(first.food).toBe(15);
+  });
+
   it('returns undelivered cargo after war or harbor destruction without teleporting', () => {
     for (const destroy of [false, true]) {
       const world = seaWorld(), { a, b, first, second } = ports(world);

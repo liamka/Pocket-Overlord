@@ -33,7 +33,7 @@ test('automatically creates, renders and reloads a template world without a shap
   await page.locator('#settings').click();
   await page.locator('#new-world').click();
   await expect(page.locator('#biome-select')).toHaveCount(0);
-  await expect(page.getByRole('combobox', { name: 'Nature', exact: true })).toHaveValue('');
+  await page.getByRole('combobox', { name: 'Nature', exact: true }).selectOption('');
   await page.locator('#confirm-new').click();
   await expect(page.locator('#new-dialog')).not.toBeVisible();
   await expect.poll(async () => (await savedWorld(page))?.seed).not.toBe(previousSeed);
@@ -106,21 +106,16 @@ for (const biome of BIOMES) {
     const previous = (await savedWorld(page))!;
     await page.locator('#settings').click();
     await page.locator('#new-world').click();
-    const picker = page.getByLabel('Biome', { exact: true });
+    const picker = page.getByLabel('Island shape', { exact: true });
     await expect(picker).toBeVisible();
     expect(await picker.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value)))
       .toEqual(['', 'dragon', 'turtle', 'phoenix', 'kraken', 'whale', 'yin-yang']);
-    await expect(picker).toHaveValue('');
     await picker.selectOption(biome.id);
     expect((await savedWorld(page))!.terrain).toEqual(previous.terrain);
     await page.keyboard.press('Escape');
     await expect(page.locator('#new-dialog')).toBeHidden();
     expect((await savedWorld(page))!.seed).toBe(previous.seed);
-    await page.locator('#settings').click();
-    await page.locator('#new-world').click();
-    await expect(picker).toHaveValue(biome.id);
-
-    // Fix only the random seed: its automatic template must differ from the explicit selection.
+    // Fix the preview seed: its automatic template must differ from the explicit selection.
     const seed = BIOMES.length * 20 + (BIOMES.findIndex(candidate => candidate.id === biome.id) + 1) % BIOMES.length;
     expect(biomeForSeed(seed)).not.toBe(biome.id);
     await page.evaluate(seed => {
@@ -130,6 +125,9 @@ for (const biome of BIOMES) {
         return random(values);
       };
     }, seed);
+    await page.locator('#settings').click();
+    await page.locator('#new-world').click();
+    await picker.selectOption(biome.id);
     await page.locator('#confirm-new').click();
     await expect(page.locator('#loading-screen')).toBeHidden();
     await expect.poll(async () => (await savedWorld(page))?.seed).toBe(seed);
@@ -151,7 +149,8 @@ test('debug mode localizes the picker and keeps automatic generation available',
   await page.locator('#settings').click();
   await page.locator('#language-select').selectOption('ru');
   await page.locator('#new-world').click();
-  const picker = page.getByLabel('Биом', { exact: true });
+  const picker = page.getByLabel('Форма острова', { exact: true });
+  await expect(page.getByRole('img', { name: 'Превью нового острова', exact: true })).toBeVisible();
   await expect(picker.locator('option')).toHaveText(['Случайный', 'Дракон', 'Черепаха', 'Феникс', 'Кракен', 'Кит', 'Инь и Ян']);
   await picker.selectOption('whale');
   await picker.selectOption('');
@@ -171,7 +170,7 @@ test('choosing a biome through the native picker waits for explicit confirmation
   page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
   await page.locator('#settings').click();
   await page.locator('#new-world').click();
-  const picker = page.getByLabel('Biome', { exact: true });
+  const picker = page.getByLabel('Island shape', { exact: true });
   await picker.click();
   await page.keyboard.press('p');
   await page.keyboard.press('Enter');
@@ -194,3 +193,48 @@ test('choosing a biome through the native picker waits for explicit confirmation
   expect(saved.terrain.tiles).toEqual(generateTerrain(saved.seed, 512, 384, 'phoenix').tiles);
   expect(navigations).toEqual([]);
 });
+
+for (const query of ['', '?changelog=1']) {
+  test(`previews nature and island shape changes and creates the displayed map with ${query || 'public mode'}`, async ({ page }) => {
+    await page.goto(`/${query}`);
+    await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect.poll(async () => (await savedWorld(page))?.seed).toBeDefined();
+    const previousSeed = (await savedWorld(page))!.seed;
+    await page.locator('#settings').click(); await page.locator('#new-world').click();
+    const preview = page.getByRole('img', { name: 'Preview of the new island', exact: true });
+    await expect(preview).toBeVisible();
+    const pixels = () => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+    const nature = page.getByLabel('Nature', { exact: true });
+    await nature.selectOption('grassland');
+    const grassland = await pixels();
+    await nature.selectOption('permafrost');
+    expect(await pixels()).not.toBe(grassland);
+    await nature.selectOption('grassland');
+    expect(await pixels()).toBe(grassland);
+    if (query) {
+      const shape = page.getByLabel('Island shape', { exact: true });
+      await shape.selectOption('turtle');
+      const turtle = await pixels();
+      await shape.selectOption('whale');
+      expect(await pixels()).not.toBe(turtle);
+      await shape.selectOption('');
+    }
+    const displayed = await pixels();
+    expect((await savedWorld(page))!.seed).toBe(previousSeed);
+    // Confirming must keep the preview seed even if another random seed would differ.
+    await page.evaluate(() => { crypto.getRandomValues = () => { throw new Error('Seed already chosen'); }; });
+    await page.locator('#confirm-new').click();
+    await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect.poll(async () => (await savedWorld(page))?.seed).not.toBe(previousSeed);
+    const saved = (await savedWorld(page))!;
+    const fromSavedMap = await page.evaluate(async terrain => {
+      const terrainModule = '/src/core/terrain.ts', previewModule = '/src/render/world-preview.ts';
+      const { TerrainMap } = await import(terrainModule);
+      const { drawWorldPreview } = await import(previewModule);
+      const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 96;
+      drawWorldPreview(canvas, new TerrainMap(terrain.width, terrain.height, terrain));
+      return canvas.toDataURL();
+    }, saved.terrain);
+    expect(fromSavedMap).toBe(displayed);
+  });
+}

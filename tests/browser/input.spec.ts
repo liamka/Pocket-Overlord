@@ -88,10 +88,11 @@ test('thunderstorm activates during a stationary hold and stops when dragging be
   expect(after.commands.every(command => command.kind === 'use-tool' && command.toolId === 'core:rain')).toBe(true);
 });
 
-test('Hammer of Dawn starts once, follows left dragging and hovering, and keeps right dragging for panning', async ({ page }) => {
+test('Hammer of Dawn starts once, follows held left dragging, stops on release and keeps right dragging for panning', async ({ page }) => {
   await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:hammer-of-dawn'; });
   await page.mouse.move(350, 250);
   const before = await state(page);
+  expect(before.commands).toHaveLength(0);
   await page.mouse.down(); await page.mouse.move(480, 290, { steps: 5 });
   await page.waitForTimeout(350); await page.mouse.up();
   const aimed = await state(page);
@@ -101,8 +102,8 @@ test('Hammer of Dawn starts once, follows left dragging and hovering, and keeps 
   await expect(page.locator('canvas')).not.toHaveClass('panning');
   await page.mouse.move(530, 310);
   const hovered = await state(page);
-  expect(hovered.commands.at(-1)).toMatchObject({ kind: 'aim-tool', toolId: 'core:hammer-of-dawn' });
-  expect(hovered.commands.length).toBeGreaterThan(aimed.commands.length);
+  expect(hovered.commands.at(-1)).toMatchObject({ kind: 'release-tool', toolId: 'core:hammer-of-dawn' });
+  expect(hovered.commands).toEqual(aimed.commands);
   await page.mouse.down({ button: 'right' }); await page.mouse.move(560, 330, { steps: 3 });
   await expect(page.locator('canvas')).toHaveClass('panning');
   expect((await state(page)).commands).toHaveLength(hovered.commands.length);
@@ -111,6 +112,43 @@ test('Hammer of Dawn starts once, follows left dragging and hovering, and keeps 
   expect(panned.x).toBeCloseTo(before.x - 30 / (8 * before.zoom));
   expect(panned.y).toBeCloseTo(before.y - 20 / (8 * before.zoom));
   expect(panned.commands.filter(command => command.kind === 'use-tool')).toHaveLength(1);
+});
+
+for (const reason of ['blur', 'visibility', 'cancel', 'capture', 'blocked', 'tool'] as const) {
+  test(`Hammer of Dawn releases on ${reason}`, async ({ page }) => {
+    await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:hammer-of-dawn'; });
+    await page.mouse.move(350, 250); await page.mouse.down();
+    await page.evaluate(reason => {
+      const fixture = (globalThis as InputGlobal).inputFixture, canvas = fixture.renderer.canvas;
+      if (reason === 'blur') window.dispatchEvent(new Event('blur'));
+      else if (reason === 'visibility') document.dispatchEvent(new Event('visibilitychange'));
+      else if (reason === 'cancel') canvas.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
+      else if (reason === 'capture') canvas.dispatchEvent(new PointerEvent('lostpointercapture', { pointerId: 1 }));
+      else if (reason === 'blocked') fixture.blocked = true;
+      else fixture.tool = 'core:human';
+    }, reason);
+    await expect.poll(async () => (await state(page)).commands.at(-1)).toEqual({ kind: 'release-tool', toolId: 'core:hammer-of-dawn' });
+    await page.mouse.up(); await page.mouse.move(400, 300);
+    expect((await state(page)).commands.filter(command => command.kind === 'release-tool')).toHaveLength(1);
+    expect((await state(page)).commands.filter(command => command.kind === 'use-tool')).toHaveLength(1);
+  });
+}
+
+test('Hammer of Dawn stops when left is released while the right button remains held', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:hammer-of-dawn'; });
+  await page.mouse.move(350, 250); await page.mouse.down(); await page.mouse.down({ button: 'right' });
+  await page.mouse.up();
+  await expect.poll(async () => (await state(page)).commands.at(-1)).toMatchObject({ kind: 'release-tool' });
+  await page.mouse.up({ button: 'right' });
+});
+
+test('changing speed and pausing preserve a held Hammer of Dawn until mouse release', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:hammer-of-dawn'; });
+  await page.mouse.move(350, 250); await page.mouse.down();
+  await page.keyboard.press('3'); await page.keyboard.press('Space'); await page.keyboard.press('Space');
+  expect((await state(page)).commands.filter(command => command.kind === 'release-tool')).toHaveLength(0);
+  await page.mouse.up();
+  expect((await state(page)).commands.at(-1)).toMatchObject({ kind: 'release-tool' });
 });
 
 test('blur and blocking a gesture cancel it without applying the selected tool', async ({ page }) => {

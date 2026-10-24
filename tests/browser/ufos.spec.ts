@@ -5,6 +5,46 @@ import { UFO_ID } from '../../src/content/ufos';
 
 test.beforeEach(async ({ page }) => { await page.routeWebSocket('**', socket => socket.close()); });
 
+test('departure animates off-screen, freezes on pause and resumes after reload without a visible disappearance', async ({ page }) => {
+  await page.route('**/ufo-departure-fixture', route => route.fulfill({ contentType: 'text/html', body: '<canvas width="320" height="240"></canvas>' }));
+  await page.goto('/ufo-departure-fixture');
+  const result = await page.evaluate(async () => {
+    const worldPath = '/src/core/world.ts', contentPath = '/src/content/ufos.ts', renderPath = '/src/render/ufos.ts', savePath = '/src/persistence/schema.ts';
+    const [{ World }, { setUfoViewport }, { drawUfo, drawUfoGround }, { decodeSave }] = await Promise.all([
+      import(worldPath), import(contentPath), import(renderPath), import(savePath),
+    ]);
+    const source = new World(12345), data = source.snapshot(); data.entities = []; data.nextEntityId = 1;
+    data.terrain = { width: 48, height: 48, tiles: Array(48 * 48).fill(3), moisture: Array(48 * 48).fill(0), recovery: [] };
+    const world = new World(12345, source.registry, data), saucer = world.spawn('core:ufo', { x: 20, y: 22 });
+    Object.assign(saucer.components.ufo, { age: 34.9, returnPoint: { x: -6, y: -6 }, thinkIn: 0.4 });
+    setUfoViewport(world, { left: 0, top: 0, right: 40, bottom: 30 });
+    const canvas = document.querySelector('canvas')!, ctx = canvas.getContext('2d')!;
+    const paint = (e: typeof saucer): string => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (e) { drawUfoGround(ctx, e.components.position, e.components.ufo); drawUfo(ctx, e.components.position, e.components.ufo); }
+      return canvas.toDataURL();
+    };
+    const frames = new Set<string>(); let frozen = false, restored = false, offscreenAtRemoval = false, visibleOnDeparture = false;
+    for (let i = 0; i < 160 && world.entities.has(saucer.id); i++) {
+      world.step(); const frame = paint(world.entities.get(saucer.id)); frames.add(frame);
+      if (i === 4) visibleOnDeparture = !!saucer.components.ufo.departure && ctx.getImageData(0, 0, 320, 240).data.some((v, n) => n % 4 === 3 && v > 0);
+      if (i === 12) {
+        world.paused = true; const saved = world.snapshot();
+        for (let n = 0; n < 5; n++) world.step(); frozen = paint(saucer) === frame;
+        const loaded = new World(world.seed, world.registry, decodeSave(saved, world.registry));
+        restored = paint(loaded.entities.get(saucer.id)) === frame; world.paused = false;
+      }
+      if (!world.entities.has(saucer.id)) {
+        paint(saucer);
+        offscreenAtRemoval = ctx.getImageData(0, 0, 320, 240).data.every((v, n) => n % 4 !== 3 || v === 0);
+      }
+    }
+    return { frames: frames.size, frozen, restored, visibleOnDeparture, offscreenAtRemoval, removed: !world.entities.has(saucer.id) };
+  });
+  expect(result.frames).toBeGreaterThan(12);
+  expect(result).toMatchObject({ frozen: true, restored: true, visibleOnDeparture: true, offscreenAtRemoval: true, removed: true });
+});
+
 test('the saucer animates through charge, beam and departure, freezes on pause and restores its exact pose', async ({ page }) => {
   await page.route('**/ufo-render-fixture', route => route.fulfill({ contentType: 'text/html', body: '<canvas width="320" height="240"></canvas>' }));
   await page.goto('/ufo-render-fixture');

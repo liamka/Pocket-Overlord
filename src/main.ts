@@ -1,6 +1,7 @@
 import './style.css';
 import { createRegistry } from './content/defaults';
 import { setUfoViewport } from './content/ufos';
+import { setDragonViewport } from './content/dragons';
 import { FixedClock } from './core/clock';
 import { World } from './core/world';
 import { SIMULATION_SPEEDS, type GameCommand, type SimulationSpeed } from './core/types';
@@ -53,7 +54,11 @@ for (const [button, direction] of [[ui.slower, -1], [ui.faster, 1]] as const) bu
   if (speed !== undefined) dispatch({ kind: 'speed', speed });
   ui.closeSpeedMenu();
 });
-ui.newWorld.addEventListener('click', () => { ui.settingsDialog.close(); ui.prepareNewWorld(); ui.dialog.showModal(); });
+ui.newWorld.addEventListener('click', () => {
+  ui.settingsDialog.close();
+  try { ui.prepareNewWorld(seed()); ui.dialog.showModal(); }
+  catch { ui.toast('Could not create the world. Try again.'); }
+});
 ui.settingsDialog.addEventListener('close', () => clock.reset());
 ui.dialog.addEventListener('close', () => {
   clock.reset();
@@ -75,7 +80,7 @@ async function createWorld(): Promise<void> {
   ready = false; clock.reset();
   ui.setLoading('Creating world…');
   await paintLoading();
-  try { world = new World(seed(), registry, undefined, undefined, ui.newWorldBiome, ui.newWorldNature); }
+  try { world = new World(ui.newWorldSeed, registry, undefined, undefined, ui.newWorldBiome, ui.newWorldNature); }
   catch {
     ready = true; clock.reset(); ui.setLoading(null);
     ui.toast('Could not create the world. Try again.');
@@ -117,7 +122,8 @@ function frame(now: number): void {
     input.update(now);
     const camera = renderer.camera;
     const topLeft = camera.screenToWorld(0, 0), bottomRight = camera.screenToWorld(camera.width, camera.height);
-    setUfoViewport(world, { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y });
+    const viewport = { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y };
+    setUfoViewport(world, viewport); setDragonViewport(world, viewport);
     clock.advance(now, !world.paused && !modalOpen(), () => world.step(), world.speed);
     renderer.draw(world, now, ui.currentLanguage);
     if (now - lastUI > 150) { updateUI(); lastUI = now; }
@@ -134,6 +140,8 @@ async function loadWorld(): Promise<void> {
   await paintLoading();
   if (result.status === 'loaded') { world = new World(result.snapshot.seed, registry, result.snapshot); ui.saved('Мир восстановлен'); }
   else { world = new World(seed(), registry); ui.saved('Автосохранение каждые 5 с'); }
+  // Physical mouse holds do not survive a page reload.
+  for (const tool of registry.tools.values()) tool.release?.(world);
   ui.setLoadingProgress(3, 4);
   await paintLoading();
   showWorld(4);

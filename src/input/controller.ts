@@ -84,17 +84,21 @@ export class DesktopController {
       }
       const speed = speedKeys[event.code.replace(/^(Digit|Numpad)/, '')] ?? speedKeys[event.key];
       if (speed !== undefined) {
-        event.preventDefault(); release(); host.dispatch({ kind: 'speed', speed }); return;
+        event.preventDefault(); if (!host.tool().release) release(); host.dispatch({ kind: 'speed', speed }); return;
       }
       const tool = [...host.tools()].find(t => t.shortcut === event.key);
       if (tool) { event.preventDefault(); release(); host.select(tool.id); }
-      if (event.code === 'Space' && !target.closest('button')) { event.preventDefault(); release(); host.togglePause(); }
+      if (event.code === 'Space' && !target.closest('button')) { event.preventDefault(); if (!host.tool().release) release(); host.togglePause(); }
     });
     window.addEventListener('keyup', event => { if (this.held.delete(event.code)) { event.preventDefault(); this.control(); } });
   }
   private release(): void {
     const gesture = this.gesture;
     this.gesture = undefined; this.panning = false;
+    if (gesture?.button === 0 && gesture.applied && [...this.host.tools()].some(tool => tool.id === gesture.toolId && tool.release)) {
+      this.host.dispatch({ kind: 'release-tool', toolId: gesture.toolId });
+      this.lastAim = undefined;
+    }
     this.renderer.canvas.classList.remove('panning');
     if (gesture && this.renderer.canvas.hasPointerCapture(gesture.id)) this.renderer.canvas.releasePointerCapture(gesture.id);
     this.control();
@@ -121,6 +125,7 @@ export class DesktopController {
     if (this.host.blocked()) { this.held.clear(); this.release(); this.control(false); return; }
     const gesture = this.gesture;
     if (gesture && event.pointerId === gesture.id) {
+      if (gesture.button === 0 && !(event.buttons & 1) && this.host.tool().release) { this.release(); this.updatePoint(event); return; }
       const current = { x: event.clientX, y: event.clientY };
       const steering = gesture.button === 0 && gesture.toolId === this.host.tool().id && !!(this.host.tool().aim || this.host.tool().paint);
       if (!steering && !this.panning && Math.hypot(current.x - gesture.start.x, current.y - gesture.start.y) >= DRAG_THRESHOLD) {
@@ -150,13 +155,15 @@ export class DesktopController {
   }
   private aim(): void {
     const tool = this.host.tool(), point = this.renderer.cursor;
-    if (!tool.aim || !point || this.panning || this.host.blocked()) { this.lastAim = undefined; return; }
+    if (!tool.aim || !point || this.panning || this.host.blocked()
+      || tool.release && (this.gesture?.button !== 0 || this.gesture.toolId !== tool.id)) { this.lastAim = undefined; return; }
     if (this.lastAim?.toolId === tool.id && this.lastAim.x === point.x && this.lastAim.y === point.y) return;
     this.host.dispatch({ kind: 'aim-tool', toolId: tool.id, ...point });
     this.lastAim = { toolId: tool.id, ...point };
   }
   update(now: number): void {
     if (this.host.blocked()) { this.held.clear(); this.release(); this.control(false); return; }
+    if (this.gesture && this.gesture.toolId !== this.host.tool().id) this.release();
     this.control();
     if (this.point && this.renderer.cursor) this.renderer.cursor = this.renderer.camera.screenToWorld(this.point.x, this.point.y);
     this.aim();

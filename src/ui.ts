@@ -11,6 +11,8 @@ import { version as projectVersion } from '../package.json';
 import { seasonAt, yearAt } from './core/seasons';
 import { localizedSettlementName, settlementTextLocalizer } from './content/settlement-names';
 import { RACES } from './core/races';
+import { generateTerrain } from './core/terrain';
+import { drawWorldPreview } from './render/world-preview';
 
 const escapeText = (text: string): string => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
@@ -74,6 +76,9 @@ export class UI {
   readonly timeButtons: HTMLButtonElement[];
   private readonly speedMenu: HTMLElement;
   private timeReady = false;
+  private worldSeed = 0;
+  private readonly seedInput: HTMLInputElement;
+  get newWorldSeed(): number { return this.worldSeed; }
   readonly newWorld: HTMLButtonElement;
   readonly confirmNew: HTMLButtonElement;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -138,13 +143,25 @@ export class UI {
       <small id="project-version" class="project-version" translate="no">ver ${projectVersion}</small>
       <div class="desktop-note">Для игры нужны мышь и клавиатура</div>
       <dialog id="new-dialog" aria-labelledby="new-title"><div class="dialog-symbol">${icon('globe')}</div><h2 id="new-title">Начать новый мир?</h2><p id="new-description">На месте этого острова появится новый. Текущий мир будет заменён.</p>
-        <label class="settings-label" for="nature-select">Nature</label><select id="nature-select" name="nature"><option value="">Mixed biomes</option>${NATURAL_BIOMES.map(biome => `<option value="${biome.key}">${escapeText(biome.name)}</option>`).join('')}</select>
-        ${debugMode ? `<label class="settings-label" for="biome-select">Biome</label><select id="biome-select" name="biome"><option value="">Random</option>${BIOMES.map(biome => `<option value="${biome.id}">${escapeText(biome.name)}</option>`).join('')}</select>` : ''}<div class="dialog-actions"><button class="secondary" type="button" value="cancel" autofocus>Оставить этот</button><button id="confirm-new" class="primary" type="button" value="new">Создать мир</button></div></dialog>`;
+        <div class="seed-setting"><label class="settings-label" for="world-seed">World seed</label><div class="seed-controls"><input id="world-seed" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="seed-hint seed-error"><button id="randomize-seed" class="secondary" type="button">Randomize</button></div><p id="seed-error" class="seed-error" role="alert" hidden>Enter a whole number from 0 to 4294967295.</p><p id="seed-hint" class="seed-hint">Use the same world settings to recreate this map.</p></div>
+        <div class="new-world-options"><div><label class="settings-label" for="nature-select">Nature</label><select id="nature-select" name="nature"><option value="">Mixed biomes</option>${NATURAL_BIOMES.map(biome => `<option value="${biome.key}">${escapeText(biome.name)}</option>`).join('')}</select>
+        ${debugMode ? `<label class="settings-label" for="biome-select">Island shape</label><select id="biome-select" name="biome"><option value="">Random</option>${BIOMES.map(biome => `<option value="${biome.id}">${escapeText(biome.name)}</option>`).join('')}</select>` : ''}</div><figure class="world-preview"><figcaption>Preview</figcaption><canvas id="world-preview" width="128" height="96" role="img" aria-label="Preview of the new island"></canvas></figure></div><div class="dialog-actions"><button class="secondary" type="button" value="cancel" autofocus>Оставить этот</button><button id="confirm-new" class="primary" type="button" value="new">Создать мир</button></div></dialog>`;
     this.root.insertAdjacentHTML('beforeend', `<dialog id="settings-dialog" aria-labelledby="settings-title"><form method="dialog"><div class="dialog-symbol">${icon('settings')}</div><h2 id="settings-title">Настройки</h2><label class="settings-label" for="language-select">Язык</label><select id="language-select" name="language">${languages.map(language => `<option value="${language.id}" lang="${language.id}">${language.name}</option>`).join('')}</select><p id="language-warning" class="language-warning" role="status" hidden>Не удалось запомнить язык. Выбор действует до перезагрузки страницы.</p><div class="dialog-actions"><button id="new-world" class="secondary" type="button">${icon('globe')}<span>New world</span></button><button class="primary" value="done">Готово</button></div></form></dialog>`);
     this.canvas = this.get('#world'); this.dialog = this.get('#new-dialog'); this.settingsDialog = this.get('#settings-dialog');
+    this.get('#settings-dialog .dialog-actions').insertAdjacentHTML('beforebegin', `<div class="seed-setting"><label class="settings-label" for="current-world-seed">World seed</label><div class="seed-controls"><input id="current-world-seed" type="text" readonly><button id="copy-seed" class="secondary" type="button">Copy seed</button></div><p id="seed-copy-status" class="seed-hint" role="status" hidden></p></div>`);
     this.newWorld = this.get('#new-world'); this.confirmNew = this.get('#confirm-new');
+    this.seedInput = this.get('#world-seed');
+    this.seedInput.addEventListener('input', () => { if (this.readWorldSeed()) this.updateWorldPreview(); });
+    this.get('#randomize-seed').addEventListener('click', () => {
+      try { this.setWorldSeed(crypto.getRandomValues(new Uint32Array(1))[0]); }
+      catch { this.toast('Could not create the world. Try again.'); }
+    });
+    this.get('#copy-seed').addEventListener('click', () => { void this.copyWorldSeed(); });
+    this.dialog.addEventListener('change', event => {
+      if (event.target instanceof HTMLSelectElement && this.readWorldSeed()) this.updateWorldPreview();
+    });
     // Choosing an option or pressing Enter in the picker must not submit the dialog.
-    this.confirmNew.addEventListener('click', () => this.dialog.close('new'));
+    this.confirmNew.addEventListener('click', () => { if (this.readWorldSeed()) this.dialog.close('new'); });
     this.get('#new-dialog button[value="cancel"]').addEventListener('click', () => this.dialog.close('cancel'));
     this.speedButtons = [...this.root.querySelectorAll<HTMLButtonElement>('[data-speed]')];
     this.timeToggle = this.get('#time-toggle'); this.slower = this.get('#time-slower'); this.faster = this.get('#time-faster');
@@ -186,12 +203,16 @@ export class UI {
         this.updateCategory();
       });
     }
-    this.get('#settings').addEventListener('click', () => this.settingsDialog.showModal());
+    this.get('#settings').addEventListener('click', () => {
+      this.get('#seed-copy-status').hidden = true;
+      this.settingsDialog.showModal();
+    });
     const languageSelect = this.get<HTMLSelectElement>('#language-select');
     languageSelect.value = this.language;
     languageSelect.addEventListener('change', () => {
       if (!isLanguage(languageSelect.value)) return;
       this.language = languageSelect.value;
+      this.get('#seed-copy-status').hidden = true;
       this.applyLanguage();
       this.get('#language-warning').hidden = saveLanguage(this.language);
     });
@@ -306,6 +327,7 @@ export class UI {
     for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-tool]')) button.hidden = (this.registry.tools.get(button.dataset.tool!)?.category ?? 'nature') !== this.category;
   }
   update(world: World, zoom: number): void {
+    if (this.lastWorld !== world) this.get<HTMLInputElement>('#current-world-seed').value = String(world.seed);
     this.lastWorld = world; this.lastZoom = zoom;
     this.get('#population').textContent = String(world.population);
     this.get('#houses').textContent = String(world.houseCount);
@@ -361,8 +383,41 @@ export class UI {
     const value = this.get<HTMLSelectElement>('#nature-select').value;
     return NATURAL_BIOMES.find(biome => biome.key === value)?.id;
   }
-  prepareNewWorld(): void {
+  private updateWorldPreview(): void {
+    const terrain = generateTerrain(this.worldSeed, undefined, undefined, this.newWorldBiome, this.newWorldNature);
+    drawWorldPreview(this.get<HTMLCanvasElement>('#world-preview'), terrain);
+  }
+  private readWorldSeed(): boolean {
+    const value = this.seedInput.value.trim(), seed = Number(value);
+    const valid = /^\d+$/.test(value) && Number.isInteger(seed) && seed >= 0 && seed <= 0xffffffff;
+    this.seedInput.setAttribute('aria-invalid', String(!valid));
+    this.get('#seed-error').hidden = valid;
+    this.get('#world-preview').hidden = !valid;
+    this.confirmNew.disabled = !valid;
+    if (valid) this.worldSeed = seed;
+    return valid;
+  }
+  private setWorldSeed(seed: number): void {
+    this.seedInput.value = String(seed);
+    if (this.readWorldSeed()) this.updateWorldPreview();
+  }
+  private async copyWorldSeed(): Promise<void> {
+    const input = this.get<HTMLInputElement>('#current-world-seed'), status = this.get('#seed-copy-status');
+    try {
+      await navigator.clipboard.writeText(input.value);
+      status.textContent = this.tr('Seed copied');
+    } catch {
+      input.focus(); input.select();
+      status.textContent = this.tr('Could not copy. Copy the selected seed manually.');
+    }
+    status.hidden = false;
+  }
+  prepareNewWorld(seed: number): void {
     // Escape must never reuse the previous successful confirmation's returnValue.
     this.dialog.returnValue = 'cancel';
+    for (const picker of this.dialog.querySelectorAll<HTMLSelectElement>('#nature-select, #biome-select')) {
+      picker.selectedIndex = Math.floor(Math.random() * picker.options.length);
+    }
+    this.setWorldSeed(seed);
   }
 }

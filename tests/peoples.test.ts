@@ -54,6 +54,9 @@ describe('civilized peoples', () => {
     expect(world.society.villages[0].race).toBe(race);
     expect([...world.query('dwelling')].every(e => raceOf(e) === race)).toBe(true);
     expect(people[0].components.citizen!.partnerId).toBe(people[1].id);
+    expect(people[0].components.citizen!.pregnancy).toBe(0);
+    for (let i = 0; i < 30 && people[0].components.citizen!.pregnancy === 0; i++) advance(world, 1);
+    expect([...world.query('dwelling')].every(e => !e.components.dwelling!.construction)).toBe(true);
     expect(people[0].components.citizen!.pregnancy).toBeGreaterThan(0);
     const father = people[1].id; world.remove(father);
     advance(world, 17);

@@ -157,6 +157,9 @@ export function registerEffects(registry: Registry): void {
       if (!entity || !health) return;
       health.current -= event.amount;
       if (health.current <= 0) {
+        if (entity.components.dwelling && entity.components.position) {
+          world.visual({ kind: 'collapse', ...entity.components.position, radius: 5, house: structuredClone(entity), tick: world.tick });
+        }
         if (entity.components.explosive) detonate(world, entity);
         else world.remove(entity.id);
       }

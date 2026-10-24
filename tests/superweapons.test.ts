@@ -6,7 +6,8 @@ import { FixedClock } from '../src/core/clock';
 import { Terrain, type WorldSnapshot } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { advance, flatWorld } from './helpers';
-import { SEA_WAVES, seaWaveShape, seaWaves } from '../src/systems/effects';
+import { SEA_WAVES, seaWaveCoast, seaWaveShape, seaWaves } from '../src/systems/effects';
+import { landscape } from '../src/systems/landscape';
 
 const registry = createRegistry();
 let empty: WorldSnapshot;
@@ -100,6 +101,42 @@ describe('sea waves and tsunamis', () => {
 });
 
 describe('Hammer of Dawn', () => {
+  it('keeps a single beam firing beyond the old deadline and stops immediately on release', () => {
+    const world = fresh(); use(world, HAMMER.id); advance(world, 8);
+    const strike = superweaponStrikes(world, HAMMER.id)[0];
+    expect(strike.elapsed).toBeCloseTo(8); expect(strike.next).toBeGreaterThan(30);
+    use(world, HAMMER.id, 80, 64);
+    expect(superweaponStrikes(world, HAMMER.id)).toEqual([strike]); expect(strike.elapsed).toBeCloseTo(8);
+    expect(() => decodeSave(world.snapshot(), registry)).not.toThrow();
+    world.paused = true; world.command({ kind: 'release-tool', toolId: HAMMER.id });
+    expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(0);
+    const survivor = world.spawn('core:tree', { x: 64, y: 64 })!;
+    world.paused = false; advance(world, 1); expect(survivor.components.health!.current).toBe(80);
+    use(world, HAMMER.id, 80, 64); expect(superweaponStrikes(world, HAMMER.id)[0].elapsed).toBe(0);
+  });
+
+  it('cancels charging on release without firing later or stopping another weapon', () => {
+    const world = fresh(); use(world, HAMMER.id, 32, 64); use(world, TSAR.id, 100, 100);
+    advance(world, 0.3); world.command({ kind: 'release-tool', toolId: HAMMER.id });
+    world.command({ kind: 'release-tool', toolId: HAMMER.id });
+    world.command({ kind: 'aim-tool', toolId: HAMMER.id, x: 40, y: 64 });
+    expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(0);
+    expect(superweaponStrikes(world, TSAR.id)).toHaveLength(1);
+    advance(world, 1); expect(world.terrain.at(32, 64)).toBe(Terrain.Grass);
+    expect(world.terrain.at(100, 100)).toBe(Terrain.Crater);
+  });
+
+  it('loads a v26 beam during its old fade without replaying damage', () => {
+    const world = fresh(); use(world, HAMMER.id); advance(world, 4);
+    const old = world.snapshot(); old.version = 26;
+    (old.scenarios[0].state as { strikes: { next: number }[] }).strikes[0].next = 30;
+    const restored = new World(world.seed, registry, decodeSave(old, registry));
+    expect(superweaponStrikes(restored, HAMMER.id)[0].next).toBe(35);
+    restored.command({ kind: 'release-tool', toolId: HAMMER.id });
+    const survivor = restored.spawn('core:tree', { x: 64, y: 64 })!;
+    advance(restored, 1); expect(survivor.components.health!.current).toBe(80);
+  });
+
   it('smoothly follows the aim point and burns a continuous trail instead of teleporting damage', () => {
     const world = fresh(), start = { x: 32, y: 64 };
     const along = world.spawn('core:tree', { x: 44, y: 64 })!, outside = world.spawn('core:tree', { x: 44, y: 73 })!;
@@ -116,7 +153,7 @@ describe('Hammer of Dawn', () => {
     world.command({ kind: 'aim-tool', toolId: HAMMER.id, x: turn.x, y: 40 }); advance(world, 0.5);
     expect(strike.x).toBeCloseTo(turn.x); expect(strike.y).toBeCloseTo(turn.y - 5);
     expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(1);
-    advance(world, 2);
+    advance(world, 2); world.command({ kind: 'release-tool', toolId: HAMMER.id });
     const stopped = { x: strike.x, y: strike.y };
     world.command({ kind: 'aim-tool', toolId: HAMMER.id, x: 90, y: 90 }); advance(world, 0.1);
     expect(strike).toMatchObject(stopped);
@@ -172,13 +209,77 @@ describe('Hammer of Dawn', () => {
     const newcomer = world.spawn('core:tree', { x: 65, y: 64 })!;
     advance(world, 0.2); expect(world.entities.has(newcomer.id)).toBe(false);
     expect(outside.components.health!.current).toBe(80); expect(outside.components.thermal!.burning).toBe(false);
-    advance(world, 4); expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(0);
+    advance(world, 4); expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(1);
+    const late = world.spawn('core:tree', { x: 64, y: 64 })!;
+    advance(world, 0.2); expect(world.entities.has(late.id)).toBe(false);
+    world.command({ kind: 'release-tool', toolId: HAMMER.id });
+    expect(superweaponStrikes(world, HAMMER.id)).toHaveLength(0);
     const survivor = world.spawn('core:tree', { x: 64, y: 64 })!;
     advance(world, 1); expect(survivor.components.health!.current).toBe(80);
   });
 });
 
 describe('Tsar Bomba 100MT', () => {
+  it.each([86, 94, 102])('floods a coastal crater at x=%s from the sea and traces waves along the new shore', x => {
+    const world = coastalWorld(); world.terrain.set(85, 64, Terrain.DeepWater);
+    const original = [...world.terrain.tiles];
+    use(world, TSAR.id, x, 64); advance(world, 0.8);
+    expect(world.terrain.tiles).toEqual(original);
+    advance(world, 0.1);
+    let flooded = 0;
+    world.terrain.circle(x, 64, TSAR.craterRadius, (tx, ty, i) => {
+      expect(world.terrain.isLand(tx, ty)).toBe(false);
+      if (original[i] >= Terrain.Sand) { flooded++; expect(world.terrain.at(tx, ty)).toBe(Terrain.Water); }
+    });
+    expect(flooded).toBeGreaterThan(0);
+    expect(world.terrain.at(85, 64)).toBe(Terrain.DeepWater);
+    expect(world.terrain.isLand(x + TSAR.craterRadius + 1, 64)).toBe(true);
+    const coast = seaWaveCoast(seaWaves(world)[0], 0);
+    expect(coast.shore).toBeGreaterThan(11); expect(coast.shore).toBeLessThan(13);
+    expect(() => decodeSave(world.snapshot(), registry)).not.toThrow();
+  });
+
+  it('keeps inland craters dry even at the edge of the map', () => {
+    const inland = coastalWorld(); use(inland, TSAR.id, 112, 64); advance(inland, 1);
+    expect(inland.terrain.at(112, 64)).toBe(Terrain.Crater);
+    expect(inland.terrain.at(99, 64)).not.toBe(Terrain.Water);
+    const edge = fresh(); use(edge, TSAR.id, 0, 0); advance(edge, 1);
+    expect(edge.terrain.at(0, 0)).toBe(Terrain.Crater);
+    expect(edge.terrain.tiles.some(tile => tile < Terrain.Sand)).toBe(false);
+    expect(seaWaves(edge)).toHaveLength(0);
+  });
+
+  it('removes flooded roads and recovery state and preserves the new coast across pause, reload and regrowth', () => {
+    const world = coastalWorld();
+    world.terrain.set(93, 64, Terrain.Road); world.terrain.set(94, 64, Terrain.Crater);
+    world.terrain.set(95, 64, Terrain.BridgeHorizontal);
+    const house = world.spawn('core:house', { x: 94, y: 64 })!;
+    use(world, TSAR.id, 94, 64); advance(world, 0.8); world.paused = true;
+    const pending = world.snapshot(), restored = new World(world.seed, registry, decodeSave(pending, registry));
+    advance(restored, 1); expect(restored.snapshot()).toEqual(pending);
+    world.paused = restored.paused = false; advance(world, 0.1); advance(restored, 0.1);
+    expect(restored.snapshot()).toEqual(world.snapshot()); expect(world.entities.has(house.id)).toBe(false);
+    for (const x of [93, 94, 95]) {
+      const i = world.terrain.index(x, 64);
+      expect(world.terrain.at(x, 64)).toBe(Terrain.Water);
+      expect(world.terrain.recovery.has(i)).toBe(false); expect(world.terrain.roadWear.has(i)).toBe(false);
+      expect(world.terrain.roadTiles.has(i)).toBe(false);
+    }
+    const flooded = world.terrain.tiles.flatMap((tile, i) => tile < Terrain.Sand && i % 128 >= 90 ? [i] : []);
+    const loaded = new World(world.seed, registry, decodeSave(world.snapshot(), registry));
+    loaded.addRain({ x: 94, y: 64 }, 16, 5); advance(loaded, 5);
+    // Advance the landscape through a full recovery cycle without unrelated simulation.
+    for (let i = 0; i < 100; i++) { loaded.tick = (Math.floor(loaded.tick / 120) + 1) * 120; landscape(loaded); }
+    expect(flooded.every(i => loaded.terrain.tiles[i] === Terrain.Water)).toBe(true);
+    expect(() => decodeSave(loaded.snapshot(), registry)).not.toThrow();
+  });
+
+  it.each([HAMMER.id, 'core:rocket'])('keeps the existing dry coastal damage for %s', id => {
+    const world = coastalWorld(); use(world, id, 94, 64); advance(world, 2);
+    expect(world.terrain.at(94, 64)).toBe(Terrain.Crater);
+    expect(world.terrain.isLand(90, 64)).toBe(true);
+  });
+
   it('detonates once after falling, creates a large crater and destroys objects within the blast boundary', () => {
     const world = fresh(), center = world.spawn('core:house', { x: 64, y: 64 })!;
     const edge = world.spawn('core:tree', { x: 115, y: 64 })!, outside = world.spawn('core:tree', { x: 117, y: 64 })!;
@@ -230,6 +331,7 @@ describe('saved superweapon scenarios', () => {
     use(world, id, 0, 0); use(world, id, 127.9, 127.9); advance(world, 2);
     expect(() => decodeSave(world.snapshot(), registry)).not.toThrow();
     expect(world.terrain.tiles.every(tile => tile === Terrain.Water)).toBe(true);
+    if (id === HAMMER.id) world.command({ kind: 'release-tool', toolId: id });
     advance(world, 20); expect(world.scenarios).toHaveLength(0);
   });
 

@@ -52,7 +52,7 @@ function limb(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, root: number, tip
 
 function chargeAt(state: KaijuState, along: number): number {
   if (state.phase === 'beam') return 0.85 + Math.sin(state.age * 24 + along * 5) * 0.15;
-  if (state.phase === 'recover') return Math.max(0, 1 - state.phaseTime / 0.7);
+  if (state.phase === 'recover') return Math.max(0, 1 - state.phaseTime / KAIJU.recover) ** 2;
   return state.phase === 'charge' ? Math.max(0, Math.min(1, (state.phaseTime / KAIJU.charge - along * 0.65) / 0.3)) : 0;
 }
 
@@ -64,15 +64,18 @@ function spine(ctx: CanvasRenderingContext2D, base: Vec2, size: number, lean: nu
     shape(ctx, '#4dbfff', base, points.map(([x, y]) => [x * 1.3, y * 1.2])); ctx.restore();
   }
   shape(ctx, skin.outline, base, points);
-  shape(ctx, glow > 0.5 ? '#54bbeb' : '#416b7e', base, points.map(([x, y]) => [x * 0.75, y * 0.87]));
+  shape(ctx, ['#416b7e', '#497f99', '#5099c1', '#66caf2', '#b3eeff'][Math.min(4, Math.floor(glow * 4.99))], base, points.map(([x, y]) => [x * 0.75, y * 0.87]));
   shape(ctx, glow > 0.5 ? '#c2f5ff' : '#719fa8', base, [[-1, 0], [lean, -size * 0.75], [2, -size * 0.2], [3, 1]]);
 }
 
-function tailPoints(p: Vec2, state: KaijuState): { at: Vec2; width: number }[] {
-  const { joint } = kaijuPose(p, state);
+function tailPoints(p: Vec2, state: KaijuState): { at: Vec2; ground: Vec2; width: number }[] {
+  const { joint, moving, charge } = kaijuPose(p, state);
   return Array.from({ length: 13 }, (_, i) => {
-    const t = i / 12, sway = Math.sin(state.age * 1.8 - t * 4.8) * 2.3 * t + Math.sin(state.gait * Math.PI * 2) * t * 0.5;
-    return { at: project(joint(-1.4 - t * 15, sway, 2.6 * (1 - t) + 0.2)), width: Math.max(1, 13 * (1 - t) ** 1.2) };
+    const t = i / 12, wave = state.gait * Math.PI * 2 - t * 4.8;
+    const sway = Math.sin(state.age * 1.4 - t * 4.8) * 0.7 * t + Math.sin(wave) * moving * 2.1 * t
+      - (state.animation?.turn ?? 0) * t * t * 2.2;
+    const at = joint(-1.4 - t * 15, sway, 2.6 * (1 - t) + 0.2 + Math.sin(wave - 0.6) * moving * t * 0.35 + charge * t * 0.5);
+    return { at: project(at), ground: { x: at.x * TILE, y: at.y * TILE }, width: Math.max(1, 13 * (1 - t) ** 1.2) };
   });
 }
 
@@ -83,16 +86,33 @@ function drawTail(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState): vo
     segment(ctx, a.at, b.at, a.width + 2, skin.outline, b.width + 1);
     segment(ctx, a.at, b.at, a.width, skin.base, b.width);
     segment(ctx, { x: a.at.x, y: a.at.y - 3 }, { x: b.at.x, y: b.at.y - 2 }, a.width * 0.45, skin.light, b.width * 0.4);
-    if (i % 2 === 0) spine(ctx, { x: a.at.x, y: a.at.y - a.width * 0.5 }, 5 + (1 - i / 12) * 8, -Math.cos(state.heading) * 5, chargeAt(state, (12 - i) / 24));
+    if (i % 2 === 0) spine(ctx, { x: a.at.x, y: a.at.y - a.width * 0.5 }, 5 + (1 - i / 12) * 8, -Math.cos(state.animation?.bodyHeading ?? state.heading) * 5, chargeAt(state, (12 - i) / 24));
   }
 }
 
 export function drawKaijuGround(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState, water: boolean): void {
+  const pose = kaijuPose(p, state);
   ctx.save(); ctx.globalAlpha = 0.28;
   oval(ctx, '#102d39', { x: p.x * TILE + 5, y: p.y * TILE + 5 }, 36, 17);
   const tail = tailPoints(p, state);
   for (let i = 0; i < tail.length - 1; i++) {
-    segment(ctx, { x: tail[i].at.x + 5, y: tail[i].at.y + 9 }, { x: tail[i + 1].at.x + 5, y: tail[i + 1].at.y + 7 }, tail[i].width, '#102d39', tail[i + 1].width);
+    segment(ctx, { x: tail[i].ground.x + 5, y: tail[i].ground.y + 4 }, { x: tail[i + 1].ground.x + 5, y: tail[i + 1].ground.y + 4 }, tail[i].width, '#102d39', tail[i + 1].width);
+  }
+  for (const foot of pose.feet) {
+    ctx.globalAlpha = 0.22 * (1 - foot.height * 0.3);
+    oval(ctx, '#102d39', { x: foot.x * TILE + 4, y: foot.y * TILE + 3 }, 14 - foot.height * 2, 6);
+    if (foot.contactAge >= 0 && foot.contactAge < 0.5) {
+      const t = foot.contactAge / 0.5;
+      ctx.globalAlpha = (1 - t) * (water ? 0.8 : 0.4); ctx.fillStyle = water ? '#d4f5ff' : '#d4cba5';
+      for (let i = 0; i < 18; i++) {
+        const angle = i * Math.PI / 9;
+        ctx.fillRect(Math.round(foot.x * TILE + Math.cos(angle) * (10 + t * 23)), Math.round(foot.y * TILE + Math.sin(angle) * (4 + t * 11)), 3, 1);
+      }
+    }
+  }
+  if (pose.charge > 0) {
+    ctx.globalAlpha = pose.charge * 0.08;
+    oval(ctx, '#71d8ff', { x: p.x * TILE, y: p.y * TILE }, 43, 22);
   }
   if (water) for (let ring = 0; ring < 3; ring++) {
     const phase = (state.age * 0.6 + ring / 3) % 1;
@@ -107,52 +127,59 @@ export function drawKaijuGround(ctx: CanvasRenderingContext2D, p: Vec2, state: K
 
 function drawLeg(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState, side: number, water: boolean, far: boolean): void {
   const pose = kaijuPose(p, state), foot = pose.feet.find(f => f.side === side)!;
-  const forward = Math.cos(state.gait * Math.PI * 2 + (side < 0 ? Math.PI : 0)) * 1.25;
-  const hip = project(pose.joint(-0.5, side * 1.7, 5.3 + pose.bob));
-  const knee = project(pose.joint(1 + forward * 0.4, side * 2.6, 2.9 + foot.height * 0.5));
+  const root = pose.joint(-0.5, side * 1.7, 5.3 + pose.bob), hip = project(root);
+  const knee = project({ x: root.x * 0.35 + foot.x * 0.65 + Math.cos(pose.bodyHeading) * 0.95,
+    y: root.y * 0.35 + foot.y * 0.65 + Math.sin(pose.bodyHeading) * 0.95, height: 2.9 + foot.height * 0.5 - pose.impact * 0.16 });
   const ankle = project(foot);
   limb(ctx, hip, knee, 15, 11, far); limb(ctx, knee, { x: ankle.x, y: ankle.y - 4 }, 10, 7, far);
-  const footPoint = (f: number, s: number, z: number) => project(pose.joint(forward + f, side * 2.4 + s, foot.height + z));
+  const footPoint = (f: number, s: number, z: number) => project({
+    x: foot.x + Math.cos(foot.heading) * f - Math.sin(foot.heading) * s,
+    y: foot.y + Math.sin(foot.heading) * f + Math.cos(foot.heading) * s,
+    height: foot.height + z + f * foot.roll });
   polygon(ctx, skin.outline, [footPoint(-0.8, -0.9, 0.2), footPoint(1.7, -1, 0.1), footPoint(2, 0.9, 0), footPoint(-0.7, 1, 0.1)]);
   polygon(ctx, far ? skin.base : skin.light, [footPoint(-0.6, -0.7, 0.5), footPoint(1.6, -0.8, 0.3), footPoint(1.7, 0.7, 0.2), footPoint(-0.6, 0.8, 0.3)]);
   for (const toe of [-0.6, 0, 0.6]) polygon(ctx, '#d0d3ac', [footPoint(1.2, toe - 0.2, 0.3), footPoint(2.5, toe, 0), footPoint(1.2, toe + 0.2, 0.3)]);
-  if (state.stepIn > 0.1 && foot.height < 0.2) {
-    const t = 1 - state.stepIn / KAIJU.step;
+  if (foot.contactAge >= 0 && foot.contactAge < 0.48) {
+    const t = foot.contactAge / 0.48;
     ctx.save(); ctx.globalAlpha = (1 - t) * 0.7;
     for (let i = 0; i < 7; i++) {
       const angle = i * 2.4;
       ctx.fillStyle = water ? (i % 2 ? '#9ce7fa' : '#ddf8ff') : (i % 2 ? '#b6ac88' : '#706f60');
-      ctx.fillRect(Math.round(ankle.x + Math.cos(angle) * (6 + t * 20)), Math.round(ankle.y + Math.sin(angle) * t * 9 - Math.sin(t * Math.PI) * 12), 4, 3 + Math.floor(t * 3));
+      const x = Math.round(ankle.x + Math.cos(angle) * (6 + t * 20)), y = Math.round(ankle.y + Math.sin(angle) * t * 9 - Math.sin(t * Math.PI) * 12);
+      ctx.fillRect(x, y, 4, 3 + Math.floor(t * 3));
+      ctx.fillRect(x - 1, y + 1, 6, 2 + Math.floor(t * 3));
+      ctx.fillStyle = water ? '#e3faff' : '#c9bd96'; ctx.fillRect(x, y, 2, 1);
     }
     ctx.restore();
   }
 }
 
 function drawArm(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState, side: number, far: boolean): void {
-  const pose = kaijuPose(p, state), swing = Math.sin(state.gait * Math.PI * 2 + side) * 0.4;
+  const pose = kaijuPose(p, state), swing = -Math.sin(state.gait * Math.PI * 2 + (side < 0 ? Math.PI : 0)) * 0.7 * pose.moving;
+  const brace = pose.charge * 0.7 + pose.recoil * 0.4, spread = side * (2.8 + pose.charge * 0.4);
   const shoulder = project(pose.joint(0.3, side * 2.2, 9.1 + pose.bob));
-  const elbow = project(pose.joint(1 + swing - pose.charge * 0.4, side * 3.3, 6.8 + pose.bob));
-  const hand = project(pose.joint(2.6 + swing - pose.charge * 0.6, side * 2.8, 6.6 + pose.bob));
+  const elbow = project(pose.joint(1 + swing - brace, side * (3.3 + pose.charge * 0.4), 6.8 + pose.bob + pose.charge * 0.2));
+  const hand = project(pose.joint(2.6 + swing - brace, spread, 6.6 + pose.bob + pose.charge * 0.4));
   limb(ctx, shoulder, elbow, 7, 5, far); limb(ctx, elbow, hand, 5, 4, far);
   for (let i = -1; i <= 1; i++) {
-    const start = project(pose.joint(2.6 + swing - pose.charge * 0.6, side * 2.8 + i * 0.35, 6.6 + pose.bob));
-    const tip = project(pose.joint(3.4 + swing - pose.charge * 0.6, side * 2.8 + i * 0.4, 6.05 + pose.bob));
+    const start = project(pose.joint(2.6 + swing - brace, spread + i * 0.35, 6.6 + pose.bob + pose.charge * 0.4));
+    const tip = project(pose.joint(3.4 + swing - brace - pose.charge * 0.25, spread + i * (0.4 + pose.charge * 0.08), 6.05 + pose.bob));
     segment(ctx, start, tip, 1.6, '#c5cdb1', 0.4);
   }
 }
 
 function drawBack(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState): void {
-  const { joint, bob } = kaijuPose(p, state);
+  const { joint, bob, bodyHeading } = kaijuPose(p, state);
   for (let i = 0; i < 6; i++) {
     const t = i / 5, at = project(joint(-3.4 + t * t * 2.8, 0, 4 + t * 8 + bob));
-    spine(ctx, at, 24 - t * 8, -Math.cos(state.heading) * 12, chargeAt(state, 0.5 + t * 0.5));
+    spine(ctx, at, 24 - t * 8, -Math.cos(bodyHeading) * 12, chargeAt(state, 0.5 + t * 0.5));
   }
 }
 
 function drawHead(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState): void {
   const pose = kaijuPose(p, state), { headForward: f, headHeight: h } = pose;
-  const at = (forward: number, side: number, height: number) => project(pose.joint(f + forward, side, h + height));
-  const opening = state.phase === 'beam' ? 0.9 : state.phase === 'charge' ? 0.2 + pose.charge * 0.65 : 0.09 + Math.sin(state.age * 2) * 0.025;
+  const at = (forward: number, side: number, height: number) => project(pose.headJoint(f + forward, side, h + height));
+  const opening = pose.opening;
   const near = Math.cos(state.heading) >= 0 ? 1 : -1;
   // The skull is projected as solid planes; the jaw opens downwards in every direction.
   polygon(ctx, skin.outline, [at(-1, -1.4, 1.2), at(1.7, -1.3, 1.5), at(3, -1, 0.9), at(3.5, -0.55, 0.6), at(3.5, 0.55, 0.6), at(3, 1, 0.9), at(1.7, 1.3, 1.5), at(-1, 1.4, 1.2), at(-1.2, 0, -0.7)]);
@@ -170,6 +197,7 @@ function drawHead(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState): vo
     segment(ctx, brow, { x: eye.x + Math.cos(state.heading) * 6, y: eye.y - 2 }, 2.5, skin.outline);
     ctx.fillStyle = pose.charge > 0.5 ? '#b1f1ff' : '#ecb75d'; ctx.fillRect(eye.x - 2, eye.y - 1, 5, 2);
     ctx.fillStyle = '#182c35'; ctx.fillRect(eye.x + 1, eye.y - 1, 1, 2);
+    if (state.phase === 'idle' && state.age % 4.7 > 4.55) { ctx.fillStyle = skin.dark; ctx.fillRect(eye.x - 2, eye.y - 1, 5, 2); }
     const nostril = at(2.9, side * 0.7, 1.1); ctx.fillRect(nostril.x, nostril.y, 2, 1);
   }
   for (let i = 0; i < 8; i++) {
@@ -180,21 +208,35 @@ function drawHead(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState): vo
     const mouth = project(pose.mouth), glow = pose.charge * (0.9 + Math.sin(state.age * 31) * 0.1);
     ctx.save(); ctx.globalAlpha = glow * 0.3; oval(ctx, '#3bb7ff', mouth, 12, 9);
     ctx.globalAlpha = glow; oval(ctx, '#8ee7ff', mouth, 5, 3); oval(ctx, '#efffff', mouth, 2, 2); ctx.restore();
+    if (state.phase === 'charge') {
+      ctx.save(); ctx.globalAlpha = pose.charge * 0.8;
+      for (let i = 0; i < 7; i++) {
+        const t = (state.phaseTime * 2.5 + i / 7) % 1, angle = i * 2.4;
+        ctx.fillStyle = i % 2 ? '#78d7ff' : '#e0faff';
+        ctx.fillRect(Math.round(mouth.x + Math.cos(angle) * (1 - t) * 23), Math.round(mouth.y + Math.sin(angle) * (1 - t) * 17), 2, 2);
+      }
+      ctx.restore();
+    }
   }
 }
 
 export function drawKaiju(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuState, water: boolean): void {
   ctx.save();
-  const pose = kaijuPose(p, state), far = Math.cos(state.heading) >= 0 ? -1 : 1;
-  drawTail(ctx, p, state); drawLeg(ctx, p, state, far, water, true); drawArm(ctx, p, state, far, true);
-  if (Math.sin(state.heading) >= 0) drawBack(ctx, p, state);
-  const body = project(pose.joint(-0.2, 0, 7.4 + pose.bob));
+  const pose = kaijuPose(p, state), far = Math.cos(pose.bodyHeading) >= 0 ? -1 : 1;
+  const tailInFront = Math.sin(pose.bodyHeading) < -0.4;
+  if (!tailInFront) drawTail(ctx, p, state);
+  drawLeg(ctx, p, state, far, water, true); drawArm(ctx, p, state, far, true);
+  if (Math.sin(pose.bodyHeading) >= 0) drawBack(ctx, p, state);
+  const center = project(pose.joint(-0.2, 0, 7.4 + pose.bob)), body = { x: 0, y: 0 };
+  ctx.save(); ctx.translate(center.x, center.y);
+  ctx.transform(1 + pose.breath * 0.012, pose.sway * 0.05, -Math.cos(pose.bodyHeading) * pose.lean * 0.13,
+    1 + pose.breath * 0.01 - pose.impact * 0.025, 0, 0);
   shape(ctx, skin.outline, body, [[-17, -30], [-27, -17], [-29, 4], [-24, 24], [-14, 34], [12, 34], [24, 24], [28, 4], [25, -17], [15, -30]]);
   shape(ctx, skin.dark, body, [[-15, -28], [-25, -16], [-27, 3], [-22, 22], [-12, 31], [11, 31], [22, 22], [26, 3], [23, -16], [13, -28]]);
   shape(ctx, skin.base, body, [[-13, -27], [-23, -14], [-24, 3], [-20, 20], [-10, 28], [8, 26], [18, 15], [19, -9], [10, -26]]);
   shape(ctx, skin.light, body, [[-11, -24], [-21, -12], [-20, 1], [-13, 7], [-5, -6], [4, -24]]);
-  if (Math.sin(state.heading) > -0.55) {
-    const belly = { x: body.x + Math.cos(state.heading) * 9, y: body.y + Math.sin(state.heading) * 5 };
+  if (Math.sin(pose.bodyHeading) > -0.55) {
+    const belly = { x: body.x + Math.cos(pose.bodyHeading) * 9, y: body.y + Math.sin(pose.bodyHeading) * 5 };
     shape(ctx, '#6f887b', belly, [[-8, -22], [-15, -9], [-14, 12], [-8, 24], [6, 26], [14, 12], [15, -8], [7, -22]]);
     for (let i = 0; i < 7; i++) {
       const w = 10 + Math.sin(i / 6 * Math.PI) * 3, y = -19 + i * 6;
@@ -203,13 +245,15 @@ export function drawKaiju(ctx: CanvasRenderingContext2D, p: Vec2, state: KaijuSt
   }
   for (let i = 0; i < 27; i++) {
     const x = (i * 13 % 43) - 21, y = (i * 19 % 48) - 20;
-    if (Math.sin(state.heading) > -0.55 && Math.abs(x - Math.cos(state.heading) * 9) < 12) continue;
+    if (Math.sin(pose.bodyHeading) > -0.55 && Math.abs(x - Math.cos(pose.bodyHeading) * 9) < 12) continue;
     ctx.fillStyle = i % 3 ? '#29444c' : '#6a8982'; ctx.fillRect(body.x + x, body.y + y, 3, 2);
     ctx.fillStyle = '#81998d'; if (i % 4 === 0) ctx.fillRect(body.x + x, body.y + y - 1, 2, 1);
   }
-  const neck = project(pose.joint(pose.headForward - 0.4, 0, pose.headHeight - 0.6));
+  ctx.restore();
+  const neck = project(pose.headJoint(pose.headForward - 0.4, 0, pose.headHeight - 0.6));
   limb(ctx, project(pose.joint(0.3, 0, 9.4 + pose.bob)), neck, 15, 11);
-  if (Math.sin(state.heading) < 0) drawBack(ctx, p, state);
+  if (Math.sin(pose.bodyHeading) < 0) drawBack(ctx, p, state);
+  if (tailInFront) drawTail(ctx, p, state);
   drawLeg(ctx, p, state, -far, water, false); drawArm(ctx, p, state, -far, false);
   drawHead(ctx, p, state);
   ctx.restore();

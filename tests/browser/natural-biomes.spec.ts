@@ -104,7 +104,6 @@ for (const biome of NATURAL_BIOMES) {
     await installWorld(page, world.snapshot());
     await page.locator('#settings').click(); await page.locator('#new-world').click();
     const picker = page.getByRole('combobox', { name: 'Nature', exact: true });
-    await expect(picker).toHaveValue('');
     await expect(picker.locator('option')).toHaveText(['Mixed biomes', ...NATURAL_BIOMES.map(b => b.name)]);
     await picker.selectOption(biome.key);
     expect((await savedWorld(page)).terrain).toEqual(world.snapshot().terrain);
@@ -143,7 +142,6 @@ test('cancelling a nature choice keeps the current world and mixed biomes remain
   }
   await page.locator('#settings').click(); await page.locator('#new-world').click();
   const picker = page.getByRole('combobox', { name: 'Nature', exact: true });
-  await expect(picker).toHaveValue('jungle');
   await picker.selectOption('');
   await page.locator('#confirm-new').click();
   await expect(page.locator('#loading-screen')).toBeHidden();

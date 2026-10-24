@@ -144,6 +144,19 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
   // Existing homes stay complete; new construction and resident poses are optional state.
   [23, save => ({ ...save, version: 24 })],
   [24, save => ({ ...save, version: 25 })],
+  [25, save => ({ ...save, version: 26, entities: Array.isArray(save.entities) ? save.entities.map(entity => {
+    if (!record(entity) || !record(entity.components) || !record(entity.components.dragon)) return entity;
+    return { ...entity, components: { ...entity.components, dragon: { ...entity.components.dragon, age: entity.components.dragon.age ?? 0 } } };
+  }) : save.entities })],
+  // Held orbital beams can run beyond the old three-second timeline.
+  [26, save => ({ ...save, version: 27, scenarios: Array.isArray(save.scenarios) ? save.scenarios.map(scenario => {
+    if (!record(scenario) || scenario.id !== 'core:hammer-of-dawn' || !record(scenario.state) || !Array.isArray(scenario.state.strikes)) return scenario;
+    return { ...scenario, state: { ...scenario.state, strikes: scenario.state.strikes.map(strike =>
+      record(strike) && number(strike.elapsed, 3.6 - 1e-9, 4.3) && strike.next === 30
+        ? { ...strike, next: Math.floor((strike.elapsed - 0.6 + 1e-9) / 0.1) + 1 } : strike) } };
+  }) : save.scenarios })],
+  // Old titans acquire planted-foot poses on their next simulation step.
+  [27, save => ({ ...save, version: 28 })],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
@@ -301,6 +314,8 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     const p = entity.components.position;
     if (record(p) && (Number(p.x) >= width || Number(p.y) >= height)) fail();
     if (record(entity.components.dwelling)) homes.set(entity.id, Number(entity.components.dwelling.capacity));
+    if (record(entity.components.dwelling) && record(entity.components.dwelling.construction)
+      && Number(entity.components.dwelling.construction.struckAt) > Number(save.tick)) fail();
     if (record(entity.components.person)) {
       population++;
       const homeId = entity.components.person.homeId;
@@ -375,6 +390,11 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       if (!record(home) || (home.race ?? 'human') !== (person.race ?? 'human')) fail();
     }
     if (c.task === 'migrate' && !travelers.has(entity.id)) fail();
+    if (c.task === 'build') {
+      const site = byId.get(Number(c.targetId))?.dwelling;
+      if (!record(person) || Number(person.age) < 18 || !record(site) || !record(site.construction)
+        || (site.race ?? 'human') !== (person.race ?? 'human')) fail();
+    }
     if (c.targetId !== null && !ids.has(Number(c.targetId))) fail();
     if (c.partnerId !== null) {
       const partnerComponents = byId.get(Number(c.partnerId));

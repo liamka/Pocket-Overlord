@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DRAGON, DRAGON_FIRE_ID, DRAGON_ID, dragonAltitude, dragonBreathPoint, dragonBreathPose } from '../src/content/dragons';
+import { DRAGON, DRAGON_FIRE_ID, DRAGON_ID, dragonAltitude, dragonBreathPoint, dragonBreathPose, dragonGroundPosition, setDragonViewport } from '../src/content/dragons';
 import { World } from '../src/core/world';
-import { Terrain } from '../src/core/types';
+import { SAVE_VERSION, STEP, Terrain } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { applyEvent } from '../src/systems/effects';
 import { advance, flatWorld } from './helpers';
@@ -17,6 +17,89 @@ function attackWorld() {
 }
 
 describe('dragons', () => {
+  it.each([0, 2, 8, 5])('flies in from a screen corner to the selected point without breathing fire (seed %i)', seed => {
+    const world = flatWorld(), target = { x: 24, y: 24 }, viewport = { left: 10, top: 8, right: 38, bottom: 36 };
+    world.rng.state = seed; world.command({ kind: 'use-tool', toolId: DRAGON_ID, ...target, viewport });
+    const dragon = [...world.query('dragon')][0], state = dragon.components.dragon!;
+    const start = dragonGroundPosition(dragon.components.position!, state), flight = { ...state.arrival! };
+    expect(start.x < viewport.left - 8 || start.x > viewport.right + 8).toBe(true);
+    expect(start.y < viewport.top - 8 || start.y > viewport.bottom + DRAGON.altitude + 8).toBe(true);
+    let previous = Math.hypot(start.x - target.x, start.y - target.y);
+    for (let i = 0; i < Math.ceil(flight.duration / STEP) && state.arrival; i++) {
+      world.step(); const ground = dragonGroundPosition(dragon.components.position!, state);
+      const distance = Math.hypot(ground.x - target.x, ground.y - target.y);
+      expect(distance).toBeLessThanOrEqual(previous); previous = distance;
+      expect(state.breath).toBe(0);
+    }
+    expect(state.arrival).toBeUndefined(); expect(dragon.components.position).toEqual(target);
+    expect(state.returnPoint).toEqual(start);
+    expect([...world.entities.values()].filter(e => e.typeId === DRAGON_FIRE_ID)).toHaveLength(0);
+    world.step(); expect(Math.hypot(dragon.components.position!.x - target.x, dragon.components.position!.y - target.y)).toBeCloseTo(DRAGON.speed * STEP);
+  });
+
+  it('begins its return at 35 seconds, stops fire and flies fully outside the viewport before removal', () => {
+    const world = flatWorld(); world.terrain.tiles.fill(Terrain.DeepWater);
+    const dragon = world.spawn(DRAGON_ID, { x: 24, y: 24 })!, state = dragon.components.dragon!;
+    advance(world, DRAGON.lifetime - STEP); expect(state.departure).toBeUndefined();
+    const before = { ...dragon.components.position! }; state.breath = 1; state.pulseIn = 0;
+    world.step(); expect(state.age).toBeCloseTo(35); expect(state.departure).toBeDefined();
+    expect(state.breath).toBe(0); expect(state.targetId).toBeNull();
+    expect(dragonGroundPosition(dragon.components.position!, state)).toEqual(before);
+    const heading = state.heading; world.step();
+    const turn = Math.atan2(Math.sin(state.heading - heading), Math.cos(state.heading - heading));
+    expect(Math.abs(turn)).toBeLessThanOrEqual(STEP * 1.8 + 1e-9);
+    advance(world, 0.5); expect(world.entities.has(dragon.id)).toBe(true);
+    expect(dragonGroundPosition(dragon.components.position!, state)).not.toEqual(before);
+    advance(world, 4); expect(world.entities.has(dragon.id)).toBe(false);
+    expect([...world.entities.values()].filter(e => e.typeId === DRAGON_FIRE_ID)).toHaveLength(0);
+  });
+
+  it.each(['arrival', 'departure'] as const)('freezes and restores its %s without resetting the deadline', phase => {
+    const world = flatWorld(); world.terrain.tiles.fill(Terrain.DeepWater);
+    world.command({ kind: 'use-tool', toolId: DRAGON_ID, x: 24, y: 24 });
+    const dragon = [...world.query('dragon')][0], state = dragon.components.dragon!;
+    if (phase === 'departure') { advance(world, 4); state.age = DRAGON.lifetime - STEP; world.step(); }
+    advance(world, 0.5); expect(state[phase]).toBeDefined();
+    world.paused = true; const saved = world.snapshot(); advance(world, 1); expect(world.snapshot()).toEqual(saved);
+    const restored = new World(world.seed, world.registry, decodeSave(JSON.parse(JSON.stringify(saved)), world.registry));
+    const copy = restored.entities.get(dragon.id)!;
+    expect(dragonGroundPosition(copy.components.position!, copy.components.dragon!)).toEqual(dragonGroundPosition(dragon.components.position!, state));
+    world.paused = restored.paused = false; advance(world, 6); advance(restored, 6);
+    expect(restored.snapshot()).toEqual(world.snapshot());
+  });
+
+  it('keeps flying if the camera follows it beyond the original exit point', () => {
+    const world = flatWorld(), dragon = world.spawn(DRAGON_ID, { x: 24, y: 24 })!, state = dragon.components.dragon!;
+    Object.assign(state, { age: 35 - STEP, returnPoint: { x: -12, y: -12 } });
+    setDragonViewport(world, { left: -90, top: -70, right: 110, bottom: 90 }); world.step();
+    const first = { ...state.departure! };
+    expect(first.toX < -98 || first.toY < -78).toBe(true);
+    setDragonViewport(world, { left: first.toX - 40, top: first.toY - 40, right: first.toX + 40, bottom: first.toY + 40 });
+    advance(world, first.duration + STEP);
+    expect(world.entities.has(dragon.id)).toBe(true); expect(state.departure!.toX).toBeLessThan(first.toX);
+    advance(world, 4); expect(world.entities.has(dragon.id)).toBe(false);
+  });
+
+  it('migrates existing dragons in place and rejects broken arrival and departure saves', () => {
+    const world = flatWorld(), dragon = world.spawn(DRAGON_ID, { x: 24, y: 24 })!;
+    const legacy = JSON.parse(JSON.stringify(world.snapshot())); legacy.version = 25;
+    delete legacy.entities[0].components.dragon.age;
+    const loaded = decodeSave(legacy, world.registry);
+    expect(loaded.version).toBe(SAVE_VERSION); expect(loaded.entities[0].components.dragon!.age).toBe(0);
+    expect(loaded.entities[0].components.position).toEqual(dragon.components.position);
+    expect(loaded.entities[0].components.dragon!.arrival).toBeUndefined();
+    world.remove(dragon.id); world.command({ kind: 'use-tool', toolId: DRAGON_ID, x: 24, y: 24 });
+    const state = [...world.query('dragon')][0].components.dragon!;
+    for (const phase of ['arrival', 'departure'] as const) {
+      if (phase === 'departure') { advance(world, 4); state.age = DRAGON.lifetime; world.step(); }
+      for (const [key, value] of [['fromX', NaN], ['toY', Infinity], ['duration', 0], ['elapsed', 10]]) {
+        const saved = world.snapshot(); Object.assign(saved.entities.find(e => e.components.dragon)!.components.dragon![phase]!, { [key]: value });
+        expect(() => decodeSave(saved, world.registry)).toThrow();
+      }
+      expect(decodeSave(world.snapshot(), world.registry)).toEqual(world.snapshot());
+    }
+  });
+
   it('spawns over land, water and buildings without adding residents or blocking ground movement', () => {
     const world = flatWorld();
     world.terrain.set(12, 12, Terrain.DeepWater);
@@ -148,8 +231,9 @@ describe('dragons', () => {
 
   it('connects the mouth to the actual ground impact in every flight direction', () => {
     const p = { x: 24, y: 24 }, time = 1.25;
-    // The body is about ten pixels above its shadow, below a house roof.
-    expect(dragonAltitude(time) * 8).toBeLessThan(12);
+    // The airborne body clears the ground shadow while the jet still reaches its actual impact.
+    expect(dragonAltitude(time) * 8).toBeGreaterThan(24);
+    expect(dragonAltitude(time) * 8).toBeLessThan(28);
     for (let i = 0; i < 8; i++) {
       const heading = i * Math.PI / 4;
       const mouth = dragonBreathPose(p, heading, time, 0);

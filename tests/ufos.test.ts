@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { UFO, UFO_ID, ufoGroundPosition, ufoPose } from '../src/content/ufos';
+import { UFO, UFO_ID, setUfoViewport, ufoGroundPosition, ufoPose } from '../src/content/ufos';
 import { World } from '../src/core/world';
-import { SAVE_VERSION, Terrain } from '../src/core/types';
+import { SAVE_VERSION, STEP, Terrain } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { applyEvent } from '../src/systems/effects';
 import { advance, flatWorld } from './helpers';
@@ -13,6 +13,77 @@ function attackWorld() {
 }
 
 describe('flying saucers', () => {
+  it('starts leaving at 35 simulation seconds and stays visible until it has flown out', () => {
+    const world = flatWorld(), saucer = world.spawn(UFO_ID, { x: 24, y: 24 })!, state = saucer.components.ufo!;
+    advance(world, UFO.lifetime - STEP);
+    expect(state.departure).toBeUndefined(); expect(world.entities.has(saucer.id)).toBe(true);
+    const before = { ...saucer.components.position! };
+    world.step();
+    expect(state.age).toBeCloseTo(35); expect(state.departure).toBeDefined();
+    expect(ufoGroundPosition(saucer.components.position!, state)).toEqual(before);
+    advance(world, 0.5);
+    expect(world.entities.has(saucer.id)).toBe(true);
+    expect(ufoGroundPosition(saucer.components.position!, state)).not.toEqual(before);
+    advance(world, 4);
+    expect(world.entities.has(saucer.id)).toBe(false); expect([...world.query('ufo')]).toHaveLength(0);
+    expect(world.visuals.filter(v => v.kind === 'blast')).toHaveLength(0);
+  });
+
+  it.each(['charge', 'beam'] as const)('stops a %s attack when its visit ends', phase => {
+    const { world, state, house } = attackWorld();
+    Object.assign(state, { age: UFO.lifetime - STEP, phase, phaseTime: phase === 'beam' ? UFO.contact - STEP : 0 });
+    world.step(); expect(state.departure).toBeDefined(); expect(state.phase).toBe('recover');
+    advance(world, 0.75);
+    expect(state.phase).toBe('cruise'); expect(house.components.health!.current).toBe(180);
+    expect(world.visuals.filter(v => v.kind === 'blast')).toHaveLength(0);
+  });
+
+  it('returns toward its entry corner and stays off-screen after the camera moves', () => {
+    const world = flatWorld(); world.rng.state = 0;
+    world.command({ kind: 'use-tool', toolId: UFO_ID, x: 24, y: 24 });
+    const saucer = [...world.query('ufo')][0], state = saucer.components.ufo!;
+    const entry = { ...state.returnPoint! }; advance(world, 4);
+    expect(state.returnPoint).toEqual(entry); expect(state.arrival).toBeUndefined();
+    const view = { left: -90, top: -70, right: 110, bottom: 90 };
+    setUfoViewport(world, view); state.age = UFO.lifetime - STEP; world.step();
+    const first = { ...state.departure! };
+    expect(first.toX <= view.left - 4 || first.toY <= view.top - 4).toBe(true);
+    expect(first.toX).toBeLessThan(first.fromX); expect(first.toY).toBeLessThan(first.fromY);
+    // Follow the saucer beyond its first exit point: it must extend the flight instead of popping out.
+    setUfoViewport(world, { left: first.toX - 40, top: first.toY - 40, right: first.toX + 40, bottom: first.toY + 40 });
+    advance(world, first.duration + STEP);
+    expect(world.entities.has(saucer.id)).toBe(true); expect(state.departure!.toX).toBeLessThan(first.toX);
+    advance(world, 4);
+    expect(world.entities.has(saucer.id)).toBe(false);
+  });
+
+  it('preserves the deadline and departure path across pause and reload', () => {
+    const world = flatWorld(), saucer = world.spawn(UFO_ID, { x: 24, y: 24 })!, state = saucer.components.ufo!;
+    state.age = UFO.lifetime - 0.5; world.paused = true;
+    const before = world.snapshot(); advance(world, 2); expect(world.snapshot()).toEqual(before);
+    world.paused = false; advance(world, 0.5); expect(state.departure).toBeDefined();
+    advance(world, 0.5); world.paused = true;
+    const saved = world.snapshot(); advance(world, 1); expect(world.snapshot()).toEqual(saved);
+    const restored = new World(world.seed, world.registry, decodeSave(JSON.parse(JSON.stringify(saved)), world.registry));
+    const copy = restored.entities.get(saucer.id)!;
+    expect(ufoPose(copy.components.position!, copy.components.ufo!)).toEqual(ufoPose(saucer.components.position!, state));
+    world.paused = restored.paused = false; advance(world, 4); advance(restored, 4);
+    expect(restored.snapshot()).toEqual(world.snapshot()); expect(restored.entities.has(saucer.id)).toBe(false);
+  });
+
+  it('rejects invalid departure saves and lets older saucers leave normally', () => {
+    const { world, state } = attackWorld(), old = world.snapshot(); old.version = 24;
+    expect(decodeSave(old, world.registry)).toEqual({ ...old, version: SAVE_VERSION });
+    state.age = 40; world.step(); expect(state.departure).toBeDefined();
+    for (const [key, value] of [['toX', NaN], ['fromY', Infinity], ['duration', 0], ['elapsed', 5], ['vx', 20]]) {
+      const saved = world.snapshot(); Object.assign(saved.entities[0].components.ufo!.departure!, { [key]: value });
+      expect(() => decodeSave(saved, world.registry)).toThrow();
+    }
+    const saved = world.snapshot(); saved.entities[0].components.ufo!.phase = 'beam';
+    expect(() => decodeSave(saved, world.registry)).toThrow();
+    expect(decodeSave(world.snapshot(), world.registry)).toEqual(world.snapshot());
+  });
+
   it.each([0, 2, 8, 5])('enters from an off-screen corner and brakes at the click before attacking (seed %i)', seed => {
     const world = flatWorld(), point = { x: 24, y: 24 };
     const house = world.spawn('core:house', point)!;

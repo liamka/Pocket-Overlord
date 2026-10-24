@@ -33,6 +33,8 @@ export interface ToolDefinition {
   canApply?: (world: World, point: Vec2) => boolean;
   apply: (world: World, point: Vec2, viewport?: WorldViewport) => string | void;
   aim?: (world: World, point: Vec2) => void;
+  /** Held powers stop on release, cancellation and loading a saved world. */
+  release?: (world: World) => void;
   control?: (world: World, input: ToolControl) => void;
 }
 

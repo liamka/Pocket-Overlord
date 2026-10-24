@@ -1,6 +1,7 @@
 import type { PixelSprite, Sprite, ToolIcon } from '../content/registry';
 import type { StatusIcon } from './status-bubbles';
 import { drawDragonSprite } from './dragons';
+import { drawResidentSprite } from './residents';
 import { drawHarborSprite, drawShipSprite } from './seafaring';
 import { drawUfoSprite } from './ufos';
 import type { RaceId } from '../core/races';
@@ -67,43 +68,7 @@ export function drawSprite(ctx: CanvasRenderingContext2D, sprite: Sprite, varian
     r(colors[2], -5, -19, 7, 5); r(colors[2], -7, -14, 5, 3);
     if (variant === 2) { r('#c4b06c', 3, -12, 2, 2); r('#c4b06c', -4, -17, 2, 2); }
   } else if (sprite === 'person') {
-    if (child) ctx.scale(0.75, 0.75);
-    if (race !== 'human') {
-      const walk = Math.sin(time * 9) > 0 ? 1 : 0;
-      r('#344e4755', -3, 1, 8, 2);
-      if (race === 'elf') {
-        r('#40563b', -2, -1, 2, 3 - walk); r('#40563b', 1, -1, 2, 2 + walk);
-        r('#365b3d', -3, -7, 7, 6); r(color ?? '#8fb76b', -2, -7, 5, 5);
-        r('#d6be86', -4, -5, 1, 3); r('#d6be86', 4, -5, 1, 3);
-        r('#edcfaa', -2, -11, 5, 4); r('#edcfaa', -4, -10, 2, 1); r('#edcfaa', 3, -10, 2, 1);
-        r(variant % 2 ? '#c5ae6d' : '#e3d49a', -2, -13, 5, 2);
-        r('#648754', -2, -11, 5, 1); r('#363c31', 2, -9, 1, 1);
-      } else if (race === 'orc') {
-        r('#4d3c31', -3, -1, 3, 3 - walk); r('#4d3c31', 2, -1, 3, 2 + walk);
-        r('#5e4730', -4, -6, 9, 6); r(color ?? '#a77d48', -3, -6, 7, 3);
-        r('#6b963f', -5, -6, 2, 4); r('#6b963f', 4, -6, 2, 4);
-        r('#8bb456', -3, -11, 7, 5); r('#425c30', -3, -12, 7, 2);
-        r('#2f3725', -2, -9, 1, 1); r('#2f3725', 2, -9, 1, 1);
-        r('#eee3b2', -2, -7, 1, 2); r('#eee3b2', 2, -7, 1, 2);
-        r('#b09867', -3, -2, 7, 1);
-      } else {
-        r('#453d39', -3, 0, 3, 2 - walk); r('#453d39', 2, 0, 3, 1 + walk);
-        r('#686e70', -4, -5, 9, 5); r(color ?? '#bd8c51', -3, -5, 7, 3);
-        r('#d6a574', -5, -4, 1, 3); r('#d6a574', 5, -4, 1, 3);
-        r('#e4b986', -3, -9, 7, 4); r('#56616a', -4, -10, 9, 2); r('#a6b1b1', -3, -11, 7, 2);
-        r('#d4b276', -1, -11, 2, 3);
-        r('#4b3328', -2, -7, 1, 1); r('#4b3328', 2, -7, 1, 1);
-        r(variant % 2 ? '#b07945' : '#895032', -3, -5, 7, 3); r('#bc915a', -1, -3, 3, 2);
-      }
-      return;
-    }
-    const shirts = ['#ead6a0', '#a7cad1', '#d9947e', '#c7aed4', '#e6be76'];
-    const walk = Math.sin(time * 9) > 0 ? 1 : 0;
-    r('#344e4755', -2, 1, 6, 2);
-    r('#3f4b52', -2, -1, 2, 3 - walk); r('#3f4b52', 1, -1, 2, 2 + walk);
-    r(color ?? shirts[variant % 5], -2, -5, 5, 5);
-    r('#d9ad80', -3, -4, 1, 3); r('#d9ad80', 3, -4, 1, 3);
-    r('#e6bf91', -2, -9, 5, 4); r('#6a4d36', -2, -10, 5, 2); r('#413c33', 2, -7, 1, 1);
+    drawResidentSprite(ctx, { time, variant, child, color, race });
   } else if (sprite === 'house') {
     if (race !== 'human') {
       r('#37534455', -9, 0, 24, 6);

@@ -55,6 +55,7 @@ export interface RainEffect extends Vec2 { kind: 'rain'; radius: number; remaini
 export type VisualEvent = Vec2 & { radius: number } & (
   | { kind: 'blast'; style?: 'napalm' | 'rocket' | 'dynamite' }
   | { kind: 'birth' | 'build' }
+  | { kind: 'collapse'; house: Entity; tick: number }
   | { kind: 'love'; target: number }
 );
 export const SIMULATION_SPEEDS = [0.2, 1, 2, 4, 10, 40] as const;
@@ -65,6 +66,7 @@ export type GameCommand =
   | ({ kind: 'control-tool'; toolId: string } & ToolControl)
   | { kind: 'use-tool'; toolId: string; x: number; y: number; viewport?: WorldViewport }
   | { kind: 'aim-tool'; toolId: string; x: number; y: number }
+  | { kind: 'release-tool'; toolId: string }
   | { kind: 'start-scenario'; scenarioId: string }
   | { kind: 'speed'; speed: 0 | SimulationSpeed }
   | { kind: 'pause'; paused: boolean };
@@ -108,4 +110,4 @@ export const POPULATION_LIMIT = 300;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;
-export const SAVE_VERSION = 25;
+export const SAVE_VERSION = 28;

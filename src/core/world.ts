@@ -150,6 +150,7 @@ export class World {
     if (this.effects.length < 64) this.effects.push({ ...point, kind: 'rain', radius, remaining: duration });
   }
   command(command: GameCommand): string | undefined {
+    if (command.kind === 'release-tool') { this.registry.tools.get(command.toolId)?.release?.(this); return; }
     if (command.kind === 'control-tool') {
       if (Number.isFinite(command.x) && Number.isFinite(command.y) && Math.abs(command.x) <= 1 && Math.abs(command.y) <= 1
         && typeof command.attacking === 'boolean' && typeof command.active === 'boolean') this.registry.tools.get(command.toolId)?.control?.(this, command);

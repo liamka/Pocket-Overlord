@@ -1,9 +1,11 @@
 import type { World } from '../core/world';
-import { HARBOR_ID, SHIP_ID, angleDelta, canSail, clearSeaSegment, distance, harborBerth, harborSite, seaRoute, type ShipState } from '../core/seafaring';
+import { HARBOR_ID, SHIP_ID, SHIP_CLEARANCE, angleDelta, canSail, clearSeaSegment, distance, harborBerth, harborSite, seaRoute, type ShipState } from '../core/seafaring';
 import { Terrain, type Entity, type Vec2 } from '../core/types';
 import { reachableTiles } from './navigation';
 
 const village = (world: World, id: number | null) => world.society.villages.find(v => v.id === id);
+const SHIP_SPACING = SHIP_CLEARANCE * 2 + 0.3;
+const BERTH_WAIT_DISTANCE = SHIP_SPACING + 3;
 const ready = (e: Entity): boolean => !!e.components.harbor && e.components.harbor.built === 1 && !e.components.thermal?.burning;
 const friendly = (world: World, a: Entity, b: Entity): boolean => {
   const first = a.components.harbor!.villageId, second = b.components.harbor!.villageId;
@@ -37,7 +39,7 @@ function harbors(world: World, dt: number): void {
     state.launchIn = 8;
     const fleet = [...world.query('ship')], own = fleet.filter(e => e.components.ship!.homeId === port.id);
     const hasOtherPort = [...world.query('harbor')].some(e => e.id !== port.id && ready(e) && friendly(world, port, e));
-    if (own.length >= (hasOtherPort ? 2 : 1) || fleet.length >= 48 || fleet.some(e => distance(e.components.position!, berth) < 5)) continue;
+    if (own.length >= (hasOtherPort ? 2 : 1) || fleet.length >= 48 || fleet.some(e => distance(e.components.position!, berth) < BERTH_WAIT_DISTANCE)) continue;
     const ship = world.spawn(SHIP_ID, berth);
     if (ship) Object.assign(ship.components.ship!, { homeId: port.id, kind: own.some(e => e.components.ship!.kind === 'fishing') ? 'trade' : 'fishing',
       heading: angleDelta(state.direction * Math.PI / 2 + Math.PI / 2, 0), phase: 'docked', wait: 2 });
@@ -116,30 +118,62 @@ function arrive(world: World, entity: Entity): void {
   } else { ship.phase = 'fishing'; ship.wait = 6; ship.targetId = null; }
 }
 
+/** The nearest arrival enters first; the berth stays occupied until its departing hull clears it. */
+function berthApproach(world: World, entity: Entity, fleet: Entity[]): number {
+  const ship = entity.components.ship!, target = world.entities.get(ship.targetId ?? -1);
+  if (!target?.components.harbor) return Infinity;
+  const berth = harborBerth(target), remaining = distance(entity.components.position!, berth);
+  const blocked = fleet.some(other => {
+    if (other.id === entity.id) return false;
+    const state = other.components.ship!, d = distance(other.components.position!, berth);
+    const arriving = state.targetId === target.id && (state.phase === 'sailing' || state.phase === 'returning');
+    if (!arriving) return d < SHIP_SPACING;
+    return d < remaining || d === remaining && other.id < entity.id;
+  });
+  return blocked ? Math.max(0, remaining - BERTH_WAIT_DISTANCE) : Infinity;
+}
+
 function sail(world: World, entity: Entity, dt: number): void {
   const ship = entity.components.ship!, p = entity.components.position!;
+  const fleet = [...world.query('ship', 'position')];
+  const approach = berthApproach(world, entity, fleet);
+  if (approach === 0) { ship.speed = 0; ship.turn *= Math.max(0, 1 - dt * 3); return; }
   const goal = ship.path[ship.next];
   if (!goal) { arrive(world, entity); return; }
   const d = distance(p, goal), final = ship.next === ship.path.length - 1;
   if (d < 0.06) { ship.next++; if (final) arrive(world, entity); return; }
-  const desired = Math.atan2(goal.y - p.y, goal.x - p.x), turn = angleDelta(desired, ship.heading);
+  let desired = Math.atan2(goal.y - p.y, goal.x - p.x), clearance = approach;
+  const ahead = fleet.filter(e => {
+    if (e.id === entity.id) return false;
+    const q = e.components.position!, gap = distance(p, q);
+    const angle = angleDelta(Math.atan2(q.y - p.y, q.x - p.x), desired);
+    return gap < SHIP_SPACING + 3 && Math.abs(angle) < Math.PI / 2 && Math.abs(Math.sin(angle) * gap) < SHIP_SPACING + 0.3;
+  }).sort((a, b) => distance(p, a.components.position!) - distance(p, b.components.position!))[0];
+  if (ahead) {
+    const other = ahead.components.ship!, q = ahead.components.position!, gap = distance(p, q);
+    if (ship.targetId !== null && other.targetId === ship.targetId) {
+      // Follow the queue without trying to overtake another arrival.
+      clearance = Math.min(clearance, Math.max(0, gap - SHIP_SPACING));
+    } else {
+      // Steer around waiting hulls so a departing ship can release the berth.
+      const bearing = Math.atan2(q.y - p.y, q.x - p.x);
+      const offset = Math.asin(Math.min(1, (SHIP_SPACING + 0.3) / gap)) + 0.15;
+      const passing = [bearing + offset, bearing - offset].find(angle => clearSeaSegment(world, p,
+        { x: p.x + Math.cos(angle) * 2, y: p.y + Math.sin(angle) * 2 }));
+      if (passing === undefined) clearance = 0;
+      else desired = passing;
+    }
+  }
+  const turn = angleDelta(desired, ship.heading);
   const maxTurn = 1.25 * dt, change = Math.max(-maxTurn, Math.min(maxTurn, turn));
   ship.heading = angleDelta(ship.heading + change, 0);
   ship.turn += (change / maxTurn - ship.turn) * Math.min(1, dt * 4);
   const cruise = ship.kind === 'trade' ? 2.5 : 2.1;
   const braking = Math.min(1, Math.sqrt(d / (final ? 3 : 1.4)));
   const alignment = Math.max(0, Math.cos(turn)) ** 3;
-  let targetSpeed = cruise * braking * alignment;
+  const targetSpeed = Math.min(cruise * braking * alignment, Math.sqrt(4 * clearance));
   const candidate = { x: p.x + Math.cos(ship.heading) * Math.min(d, Math.max(ship.speed, 0.2) * dt),
     y: p.y + Math.sin(ship.heading) * Math.min(d, Math.max(ship.speed, 0.2) * dt) };
-  // Starboard passing gives approaching hulls room without reversing their sprites.
-  const ahead = [...world.query('ship', 'position')].find(e => e.id !== entity.id && distance(p, e.components.position!) < 5
-    && Math.abs(angleDelta(Math.atan2(e.components.position!.y - p.y, e.components.position!.x - p.x), ship.heading)) < 0.65);
-  if (ahead && d > 3) {
-    const side = { x: p.x + Math.cos(ship.heading + 0.65) * 1.5, y: p.y + Math.sin(ship.heading + 0.65) * 1.5 };
-    if (clearSeaSegment(world, p, side)) { ship.heading = angleDelta(ship.heading + maxTurn, 0); targetSpeed *= 0.6; }
-    else targetSpeed = 0;
-  }
   if (!canSail(world, candidate)) {
     ship.speed = 0;
     ship.wait = Math.max(0, ship.wait - dt);
@@ -153,9 +187,11 @@ function sail(world: World, entity: Entity, dt: number): void {
     return;
   }
   ship.speed += Math.max(-dt * 2, Math.min(dt * 0.8, targetSpeed - ship.speed));
-  const step = Math.min(d, ship.speed * dt);
+  const step = Math.min(d, ship.speed * dt, clearance);
   const next = { x: p.x + Math.cos(ship.heading) * step, y: p.y + Math.sin(ship.heading) * step };
-  if (canSail(world, next)) { Object.assign(p, next); world.spatial.update(entity); }
+  const blocked = fleet.some(other => other.id !== entity.id && distance(next, other.components.position!) < SHIP_SPACING
+    && distance(next, other.components.position!) < distance(p, other.components.position!) - 1e-8);
+  if (!blocked && canSail(world, next)) { Object.assign(p, next); world.spatial.update(entity); }
   else ship.speed = 0;
 }
 

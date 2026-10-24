@@ -70,7 +70,7 @@ export class SuperweaponAnimations {
     if (this.reducedMotion) return { x: 0, y: 0 };
     let strength = 0;
     for (const strike of superweaponStrikes(world, HAMMER.id)) {
-      if (strike.elapsed >= HAMMER.charge && strike.elapsed < HAMMER.charge + HAMMER.duration) strength = Math.max(strength, 1.2);
+      if (strike.elapsed >= HAMMER.charge) strength = Math.max(strength, 1.2);
     }
     for (const strike of superweaponStrikes(world, TSAR.id)) {
       const age = strike.elapsed - TSAR.delay;
@@ -88,15 +88,15 @@ export class SuperweaponAnimations {
     for (const strike of superweaponStrikes(world, HAMMER.id)) {
       const x = strike.x * TILE, y = strike.y * TILE, age = strike.elapsed - HAMMER.charge;
       if (age < 0) { target(ctx, x, y, strike.elapsed / HAMMER.charge); continue; }
-      const fade = clamp((HAMMER.end - strike.elapsed) / 0.7), wet = !world.terrain.isLand(strike.x, strike.y);
-      ctx.globalAlpha = fade * 0.45;
+      const wet = !world.terrain.isLand(strike.x, strike.y);
+      ctx.globalAlpha = 0.45;
       cloud(ctx, wet ? '#d4e9df' : '#dd702c', x, y, HAMMER.groundRadius * TILE, 0.6);
       for (let i = 0; i < 14; i++) {
         const angle = noise(i, strike.seed) * Math.PI * 2, radius = 7 + noise(i + 23, strike.seed) * 17;
-        ctx.globalAlpha = fade * (0.45 + 0.25 * Math.sin(age * 17 + i));
+        ctx.globalAlpha = 0.45 + 0.25 * Math.sin(age * 17 + i);
         block(ctx, wet ? '#f0ffff' : '#ffc55e', x + Math.cos(angle) * radius, y + Math.sin(angle) * radius * 0.7, 3 + i % 3, 2);
       }
-      ctx.globalAlpha = fade * 0.65;
+      ctx.globalAlpha = 0.65;
       ring(ctx, '#f6d782', x, y, 8 + ((age * 2) % 1) * 25, 0.6, 2);
     }
     for (const strike of superweaponStrikes(world, TSAR.id)) {
@@ -166,8 +166,7 @@ export class SuperweaponAnimations {
       ring(ctx, '#f9d88a', x, y, 28 * (1 - progress) + 7, 0.5, 2, strike.elapsed);
       return;
     }
-    const fade = clamp((HAMMER.end - strike.elapsed) / 0.7);
-    const intensity = age < HAMMER.duration ? clamp(age / 0.1) : clamp((HAMMER.end - strike.elapsed) / 0.7);
+    const intensity = clamp(age / 0.1);
     const pulse = Math.sin(age * 43) + Math.sin(age * 61), width = (12 + pulse) * intensity;
     const height = Math.max(1, y - top);
     ctx.globalAlpha = intensity * 0.12; block(ctx, '#ffad36', x - width * 2.8, top, width * 5.6, height);
@@ -187,14 +186,14 @@ export class SuperweaponAnimations {
     for (let i = 0; i < 22; i++) {
       const n = noise(i + 61, strike.seed), p = (age * (1.1 + n) + n) % 1;
       const angle = noise(i + 83, strike.seed) * Math.PI * 2;
-      ctx.globalAlpha = (1 - p) * fade;
+      ctx.globalAlpha = (1 - p) * intensity;
       block(ctx, i % 3 ? '#ffc85d' : '#fff4c4', x + Math.cos(angle) * p * 43,
         y + Math.sin(angle) * p * 22 - Math.sin(p * Math.PI) * 33, 2, 3);
     }
     for (let i = 0; i < 10; i++) {
       const n = noise(i + 133, strike.seed), p = (age * 0.5 + n) % 1;
       if (p > age * 0.5) continue;
-      ctx.globalAlpha = Math.sin(p * Math.PI) * fade * 0.35;
+      ctx.globalAlpha = Math.sin(p * Math.PI) * intensity * 0.35;
       cloud(ctx, wet ? '#d1e5df' : '#6c6656', x + (n - 0.5) * 28 + p * 18, y - 12 - p * 70, 4 + p * 9);
     }
   }

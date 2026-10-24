@@ -366,12 +366,18 @@ describe('people and settlements', () => {
     const b = world.spawn('core:person', { x: 22, y: 20 })!;
     for (const [i, p] of [a, b].entries()) {
       p.components.person!.sex = i ? 'b' : 'a'; p.components.person!.buildIn = 0;
-      p.components.person!.reproduceIn = 0; p.components.motion!.speed = 0;
+      p.components.person!.reproduceIn = 0;
     }
     advance(world, 0.5);
     expect(world.houseCount).toBe(0); expect(a.components.citizen!.partnerId).toBeNull();
     advance(world, 0.5);
     expect(world.houseCount).toBe(1); expect(a.components.citizen!.partnerId).toBe(b.id);
+    const site = [...world.query('dwelling')][0];
+    expect(site.components.dwelling!.construction).toBeDefined();
+    expect(a.components.citizen!.pregnancy).toBe(0);
+    for (let i = 0; i < 30 && a.components.citizen!.pregnancy === 0; i++) advance(world, 1);
+    expect(site.components.dwelling!.construction).toBeUndefined();
+    expect(a.components.citizen!.pregnancy).toBeGreaterThan(0);
     advance(world, 8);
     expect(world.population).toBe(2);
     advance(world, 9);

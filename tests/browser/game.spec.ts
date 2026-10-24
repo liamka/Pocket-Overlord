@@ -707,7 +707,7 @@ test('Napalm Airstrike can be selected, saved on pause and resumed after reload'
   expect(errors).toEqual([]);
 });
 
-test('Hammer of Dawn and Tsar Bomba can be selected and continue after a paused save reload', async ({ page }) => {
+test('reloading releases a held Hammer of Dawn while Tsar Bomba still resumes from a paused save', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await seed(page, { ...flatWorld().snapshot(), paused: true, speed: 1 });
   await page.getByRole('button', { name: 'Разрушение', exact: true }).click();
@@ -717,8 +717,15 @@ test('Hammer of Dawn and Tsar Bomba can be selected and continue after a paused 
     await expect(page.locator('#tool-hint')).not.toBeEmpty();
     expect(await button.locator('canvas').evaluate(canvas => (canvas as HTMLCanvasElement).getContext('2d')!
       .getImageData(0, 0, 64, 64).data.some((value, index) => index % 4 === 3 && value > 0))).toBe(true);
-    await page.mouse.click(...Object.values(point(x, 24)) as [number, number]);
+    await page.mouse.move(...Object.values(point(x, 24)) as [number, number]);
+    await page.mouse.down();
+    if (id === 'core:tsar-bomba') await page.mouse.up();
     await expect.poll(async () => (await readSave(page))?.scenarios.some(scenario => scenario.id === id)).toBe(true);
+    if (id === 'core:hammer-of-dawn') {
+      await page.reload(); await page.mouse.up();
+      await expect(page.locator('#loading-screen')).toBeHidden();
+      await expect.poll(async () => (await readSave(page))?.scenarios.some(scenario => scenario.id === id)).toBe(false);
+    }
   }
   const pending = (await readSave(page))!.scenarios;
   await page.reload();
@@ -731,24 +738,28 @@ test('Hammer of Dawn and Tsar Bomba can be selected and continue after a paused 
   expect(errors).toEqual([]);
 });
 
-test('Hammer of Dawn follows the pointer and destroys objects along its moving path', async ({ page }) => {
+test('Hammer of Dawn follows the held pointer beyond three seconds and stops after release', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const world = flatWorld(), target = world.spawn('core:tree', { x: 28, y: 28 })!, outside = world.spawn('core:tree', { x: 28, y: 40 })!;
   await seed(page, { ...world.snapshot(), paused: true, speed: 1 });
   await page.getByRole('button', { name: 'Разрушение', exact: true }).click();
   await page.getByRole('button', { name: 'Молот рассвета', exact: true }).click();
   await expect(page.locator('#tool-hint')).toContainText('Ведите курсор');
-  await page.mouse.click(...Object.values(point(12, 24)) as [number, number]);
+  await page.keyboard.press('2');
+  await page.mouse.move(...Object.values(point(12, 24)) as [number, number]); await page.mouse.down();
   await page.mouse.move(...Object.values(point(36, 24)) as [number, number], { steps: 6 });
   await expect.poll(async () => {
     const state = (await readSave(page))?.scenarios.find(scenario => scenario.id === 'core:hammer-of-dawn')?.state;
-    return state as unknown as { strikes: { x: number; targetX: number }[] } | undefined;
-  }).toMatchObject({ strikes: [{ x: 12, targetX: 36 }] });
-  await page.keyboard.press('2');
+    return (state as unknown as { strikes: { elapsed: number }[] } | undefined)?.strikes[0]?.elapsed ?? 0;
+  }, { timeout: 15000 }).toBeGreaterThan(5);
   await expect.poll(async () => (await readSave(page))?.entities.some(entity => entity.id === target.id), { timeout: 10000 }).toBe(false);
   const saved = (await readSave(page))!;
   expect(saved.entities.some(entity => entity.id === outside.id)).toBe(true);
   expect(saved.terrain.tiles[28 * 48 + 28]).toBe(Terrain.Crater);
+  await page.mouse.up();
+  await page.mouse.move(...Object.values(point(28, 36)) as [number, number]);
+  await expect.poll(async () => (await readSave(page))?.scenarios.some(scenario => scenario.id === 'core:hammer-of-dawn')).toBe(false);
+  expect((await readSave(page))!.entities.some(entity => entity.id === outside.id)).toBe(true);
   expect(errors).toEqual([]);
 });
 

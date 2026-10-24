@@ -1,8 +1,9 @@
-import { DRAGON, dragonAltitude, dragonBreathPose, type DragonState } from '../content/dragons';
+import { DRAGON, dragonAltitude, dragonBreathPose, dragonGroundPosition, type DragonState } from '../content/dragons';
 import type { Vec2 } from '../core/types';
 import { TILE } from './camera';
 
-const FRAME_COUNT = 20;
+const FRAME_COUNT = 24;
+const FRAME_SIZE = 160;
 const DIRECTIONS = 32;
 const DIRECTION_STEP = Math.PI * 2 / DIRECTIONS;
 interface DragonFrame { sprite: HTMLCanvasElement; shadow: HTMLCanvasElement; mouth: Vec2 }
@@ -31,14 +32,14 @@ function dragonFrame(frame: number, direction: number, breathing: boolean): Drag
   const existing = frames.get(key);
   if (existing) return existing;
   const sprite = document.createElement('canvas'), shadow = document.createElement('canvas');
-  sprite.width = shadow.width = 128; sprite.height = shadow.height = 128;
+  sprite.width = shadow.width = FRAME_SIZE; sprite.height = shadow.height = FRAME_SIZE;
   const ctx = sprite.getContext('2d')!, shadowCtx = shadow.getContext('2d')!;
-  ctx.translate(64, 64); shadowCtx.translate(64, 64);
+  ctx.translate(FRAME_SIZE / 2, FRAME_SIZE / 2); shadowCtx.translate(FRAME_SIZE / 2, FRAME_SIZE / 2);
   const phase = frame / FRAME_COUNT, wave = phase * Math.PI * 2;
-  // A fast, extended downstroke is followed by a slower, folded recovery.
+  // Hold the raised wings, drive a broad downstroke, then fold the wrists on recovery.
   const keys = [
-    [0, 1.05, 0.1], [0.18, 0.35, 0], [0.32, -0.12, 0],
-    [0.5, 0.35, 0.85], [0.73, 1.15, 0.8], [1, 1.05, 0.1],
+    [0, 1.12, 0.18], [0.13, 0.98, 0], [0.38, -0.62, 0],
+    [0.5, -0.78, 0.12], [0.7, 0.12, 0.72], [0.88, 1.04, 0.48], [1, 1.12, 0.18],
   ];
   const next = keys.findIndex(k => k[0] > phase), a = keys[next - 1], b = keys[next];
   const t = (phase - a[0]) / (b[0] - a[0]), eased = t * t * (3 - 2 * t);
@@ -49,8 +50,10 @@ function dragonFrame(frame: number, direction: number, breathing: boolean): Drag
   const project = (p: Joint, ground = false): number[] => [p.x * cosine - p.y * facing * sine, p.x * sine + p.y * facing * cosine - (ground ? 0 : p.z)];
   const body = ([x, y]: number[]): Joint => {
     const neck = Math.max(0, (x - 10) / 23);
-    return { x, y: y + Math.sin(wave - x * 0.06) * (1 - neck) * 0.65,
-      z: Math.sin(wave - 0.7) * 1.3 * (1 - neck) + neck * (breathing ? -1.5 : Math.sin(wave - 1.1) * 1.5) };
+    const pitch = Math.sin(wave - 0.65) * 0.035;
+    return { x: x - neck * (breathing ? 0 : 0.6), y: y * (1.45 - neck * 0.27) + Math.sin(wave - x * 0.055) * (1 - neck) * 0.6,
+      z: Math.sin(wave - 0.7) * 1.5 * (1 - neck) + x * pitch * (1 - neck)
+        + neck * (breathing ? -2.5 : Math.sin(wave - 1.1) * 0.65) };
   };
   const paint = (color: string, points: number[][], joint = body): void => {
     const posed = points.map(joint);
@@ -60,28 +63,33 @@ function dragonFrame(frame: number, direction: number, breathing: boolean): Drag
   const shape = (color: string, points: number[][]): void => paint(color, points);
   const r = (color: string, x: number, y: number, w: number, h: number): void => shape(color, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]);
   const wing = (side: number): void => {
-    const wrist = lift - Math.sin(wave - 0.6) * 0.22 - fold * 0.3;
+    // The tips and membrane follow the shoulder with a small delay.
+    const wrist = lift - Math.sin(wave - 0.6) * 0.3 - fold * 0.22;
     const joint = ([x, y]: number[]): Joint => {
-      const distance = Math.max(0, y - 3), arm = Math.min(12, distance), fingers = Math.max(0, distance - 12);
-      return { x: x - fold * distance * 0.3 + Math.sin(wave) * distance * 0.08,
-        y: side * (3 + (Math.cos(lift) * arm + Math.cos(wrist) * fingers) * (1 - fold * 0.24)),
-        z: body([4, 3]).z + Math.sin(lift) * arm + Math.sin(wrist) * fingers };
+      const distance = Math.max(0, y - 3), arm = Math.min(14, distance), fingers = Math.max(0, distance - 14);
+      const trailing = Math.max(0, Math.min(1, (8 - x) / 32));
+      return { x: x - fold * distance * 0.24 + Math.sin(wave - 0.6) * distance * 0.045,
+        y: side * (3 + (Math.cos(lift) * arm + Math.cos(wrist) * fingers) * (1 - fold * 0.14)),
+        z: body([4, 3]).z + Math.sin(lift) * arm + Math.sin(wrist) * fingers
+          + Math.sin(wave - distance * 0.075) * trailing * fingers * 0.055 };
     };
     const w = (color: string, points: number[][]): void => paint(color, points, joint);
-    w('#633229', [[7, 3], [3, 15], [-11, 35], [-27, 30], [-18, 20], [-21, 13], [-11, 14], [-12, 7], [-4, 8], [-4, 2]]);
-    w('#c75e37', [[5, 4], [1, 14], [-11, 33], [-24, 29], [-15, 20], [-18, 14], [-9, 15], [-10, 8], [-2, 10]]);
-    w('#e5ad6d', [[1, 10], [-10, 30], [-21, 29], [-13, 19], [-16, 15], [-7, 16], [-8, 10]]);
-    w('#f6cc88', [[0, 11], [-11, 30], [-19, 29], [-10, 25]]);
-    w('#a3462e', [[3, 7], [-11, 33], [-13, 32], [0, 8]]);
-    w('#b65d39', [[0, 10], [-8, 16], [-17, 15], [-8, 14]]);
+    w('#633229', [[8, 2], [12, 14], [3, 28], [-8, 40], [-14, 38], [-32, 33], [-24, 23], [-27, 15], [-17, 18], [-18, 9], [-8, 11], [-7, 2]]);
+    w('#b74b2d', [[7, 4], [9, 14], [1, 27], [-9, 38], [-28, 32], [-20, 23], [-23, 17], [-14, 20], [-15, 11], [-5, 13], [-5, 4]]);
+    w('#cfb98e', [[6, 9], [7, 15], [-10, 35], [-26, 32], [-18, 23], [-21, 19], [-12, 22], [-13, 13], [-4, 16], [-4, 7]]);
+    w('#ead6aa', [[5, 11], [4, 17], [-11, 34], [-23, 32], [-13, 27]]);
+    w('#a4482e', [[8, 6], [11, 14], [1, 29], [-9, 39], [-11, 37], [-1, 26], [7, 14]]);
+    w('#a46140', [[5, 14], [-18, 24], [-26, 32], [-21, 30], [-15, 23], [3, 13]]);
+    w('#b57750', [[5, 13], [-12, 21], [-13, 14], [-11, 18], [3, 12]]);
+    w('#eecb96', [[9, 12], [14, 10], [12, 16], [9, 17]]);
   };
   const nearSide = cosine * facing >= 0 ? 1 : -1;
   wing(-nearSide);
   // The wave reaches the tail tip later than the hips; the root stays attached.
   const tail = ([x, y]: number[]): Joint => {
     const length = Math.max(0, (-x - 8) / 31), p = body([x, y]);
-    p.y += Math.sin(wave - length * 2.8) * length * 6;
-    p.z += Math.sin(wave - length * 2.2) * length * 2;
+    p.y += Math.sin(wave - length * 2.8) * length * 5;
+    p.z += Math.sin(wave - length * 2.2) * length * 2.8;
     return p;
   };
   paint('#663125', [[-1, -5], [-13, -4], [-22, 3], [-29, 6], [-36, 3], [-39, -3], [-39, 5], [-33, 11], [-25, 11], [-13, 4], [0, 6]], tail);
@@ -90,8 +98,8 @@ function dragonFrame(frame: number, direction: number, breathing: boolean): Drag
   for (const side of [-1, 1]) {
     const leg = ([x, y]: number[]): Joint => {
       const p = body([x, y]), toe = Math.max(0, (Math.abs(y) - 3) / 9);
-      p.x -= toe * (1 + Math.sin(wave - 0.8)) * 2;
-      p.y *= 1 - fold * 0.25; p.z -= toe * (1 - fold) * 2;
+      p.x -= toe * (2 + Math.sin(wave - 0.8)) * 1.5;
+      p.y *= 1 - fold * 0.2; p.z -= toe * (2 + (1 - fold) * 2);
       return p;
     };
     paint('#773225', [[-5, side * 3], [-9, side * 10], [-3, side * 12], [0, side * 10], [-4, side * 8], [2, side * 4]], leg);
@@ -124,7 +132,7 @@ function dragonFrame(frame: number, direction: number, breathing: boolean): Drag
 
 function spritePose(time: number, heading: number, breathing: boolean) {
   const direction = (Math.round(heading / DIRECTION_STEP) % DIRECTIONS + DIRECTIONS) % DIRECTIONS;
-  const frame = (Math.floor(time * 1.5 * FRAME_COUNT) % FRAME_COUNT + FRAME_COUNT) % FRAME_COUNT;
+  const frame = (Math.floor(time * DRAGON.wingBeat * FRAME_COUNT) % FRAME_COUNT + FRAME_COUNT) % FRAME_COUNT;
   const angle = heading - direction * DIRECTION_STEP;
   return { frame: dragonFrame(frame, direction, breathing), angle };
 }
@@ -132,15 +140,16 @@ function spritePose(time: number, heading: number, breathing: boolean) {
 export function drawDragonSprite(ctx: CanvasRenderingContext2D, time: number, heading = 0, breathing = false): void {
   const pose = spritePose(time, heading, breathing);
   ctx.save(); ctx.rotate(pose.angle);
-  ctx.drawImage(pose.frame.sprite, -64, -64);
+  ctx.drawImage(pose.frame.sprite, -FRAME_SIZE / 2, -FRAME_SIZE / 2);
   ctx.restore();
 }
 
 export function drawDragonShadow(ctx: CanvasRenderingContext2D, p: Vec2, heading: number, time: number, breathing = false): void {
   const pose = spritePose(time, heading, breathing);
-  ctx.save(); ctx.translate(Math.round(p.x * TILE + 2), Math.round(p.y * TILE + 2)); ctx.rotate(pose.angle);
-  ctx.globalAlpha = 0.25;
-  ctx.drawImage(pose.frame.shadow, -64, -64);
+  ctx.save(); ctx.translate(Math.round(p.x * TILE + 2), Math.round(p.y * TILE + 2));
+  ctx.scale(0.78, 0.52); ctx.rotate(pose.angle);
+  ctx.globalAlpha = 0.22;
+  ctx.drawImage(pose.frame.shadow, -FRAME_SIZE / 2, -FRAME_SIZE / 2);
   ctx.restore();
 }
 
@@ -168,6 +177,7 @@ export function drawDragonGroundFire(ctx: CanvasRenderingContext2D, p: Vec2, fue
 }
 
 export function drawDragon(ctx: CanvasRenderingContext2D, p: Vec2, dragon: DragonState, time: number): void {
+  p = dragonGroundPosition(p, dragon);
   if (dragon.breath > 0) {
     const { frame, angle } = spritePose(time, dragon.heading, true);
     const mouth = dragonBreathPose(p, dragon.heading, time, 0);
@@ -177,24 +187,24 @@ export function drawDragon(ctx: CanvasRenderingContext2D, p: Vec2, dragon: Drago
       const q = dragonBreathPose(p, dragon.heading, time, progress);
       return { x: q.x + (mouthX - mouth.x) * (1 - progress), y: q.y + (mouthY - mouth.y) * (1 - progress) };
     };
-    // Paint whole color layers so overlapping puffs form a continuous flame.
-    for (let layer = 0; layer < 3; layer++) {
-      ctx.fillStyle = ['#dc5429', '#ff9c35', '#ffe9a0'][layer];
-      for (let i = 0; i < 24 - layer * 2; i++) {
-        const progress = i / 23;
-        const q = jet(progress);
-        const flicker = Math.sin(i * 1.7 - time * 27);
-        const size = Math.max(1, Math.round((1 + progress * DRAGON.impactRadius * 5 + flicker * 0.7) * (1 - layer * 0.3)));
-        const x = Math.round(q.x * TILE), y = Math.round(q.y * TILE);
-        ctx.fillRect(x - size, y - Math.floor(size / 2), size * 2, size);
-        ctx.fillRect(x - Math.floor(size / 2), y - size, size, size * 2);
-      }
-    }
-    for (let i = 0; i < 5; i++) {
-      const progress = (time * 1.5 + i / 8) % 1;
-      const q = jet(progress);
-      ctx.fillStyle = i % 2 ? '#ffc653' : '#ec6c2f';
-      ctx.fillRect(Math.round(q.x * TILE + Math.sin(i * 7) * progress * 7), Math.round(q.y * TILE) - 3, 2, 2);
+    // Individual incandescent puffs travel out of the jaw and fan down to the ground.
+    const emitted = Math.min(1, (DRAGON.breathSeconds - dragon.breath) / 0.28);
+    const end = jet(1), dx = end.x - mouthX, dy = end.y - mouthY, length = Math.hypot(dx, dy) || 1;
+    for (let i = 0; i < 18; i++) {
+      const progress = (time * 3.6 + i / 18) % 1;
+      if (progress > emitted) continue;
+      const q = jet(progress), spread = Math.sin(i * 7.13) * progress ** 1.4 * 7;
+      const x = Math.round(q.x * TILE - dy / length * spread);
+      const y = Math.round(q.y * TILE + dx / length * spread);
+      const size = 1 + Math.floor(progress * 3.8), corner = Math.max(1, Math.floor(size / 2));
+      polygon(ctx, '#d45125', [[x - size + corner, y - size], [x + size - corner, y - size],
+        [x + size, y - size + corner], [x + size, y + size - corner], [x + size - corner, y + size],
+        [x - size + corner, y + size], [x - size, y + size - corner], [x - size, y - size + corner]]);
+      ctx.fillStyle = '#ffbd3f'; ctx.fillRect(x - size + 1, y - size + 1, Math.max(1, size * 2 - 2), Math.max(1, size * 2 - 2));
+      ctx.fillStyle = '#fff09b'; ctx.fillRect(x - size + 1, y - size + 1, Math.max(1, size * 2 - 2), 1);
+      ctx.fillRect(x - size + 1, y - size + 1, 1, Math.max(1, size * 2 - 2));
+      if (size > 2) { ctx.fillStyle = '#ee7b25'; ctx.fillRect(x - 1, y - 1, 2, 2); }
+      else { ctx.fillStyle = '#fff4c4'; ctx.fillRect(x, y, 1, 1); }
     }
   }
   ctx.save(); ctx.translate(Math.round(p.x * TILE), Math.round((p.y - dragonAltitude(time)) * TILE));

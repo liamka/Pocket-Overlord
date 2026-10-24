@@ -203,15 +203,14 @@ test('unavailable storage still dismisses loading and allows play', async ({ pag
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('failed world creation restores controls and retains the previous world', async ({ page }) => {
+test('failed new-world preparation retains controls and the previous world', async ({ page }) => {
   const snapshot = await seedWorld(page);
   await page.goto('/');
   await expect(page.locator('#loading-screen')).toBeHidden();
   await page.evaluate(() => { crypto.getRandomValues = () => { throw new Error('Seed unavailable'); }; });
   await page.locator('#settings').click(); await page.locator('#new-world').click();
-  await page.locator('#confirm-new').click();
   await expect(page.locator('#toast')).toHaveText('Could not create the world. Try again.');
-  await expect(page.locator('#loading-progress')).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.locator('#new-dialog')).toBeHidden();
   await expect(page.locator('#loading-screen')).toBeHidden();
   await expect(page.locator('#app')).toHaveJSProperty('inert', false);
   await expect(page.locator('#population')).toHaveText('1');

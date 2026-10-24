@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test';
+import { Terrain, type WorldSnapshot } from '../../src/core/types';
+import { Camera } from '../../src/render/camera';
+import { flatWorld } from '../helpers';
 
 for (const id of ['core:rocket', 'core:tsar-bomba']) {
   test(`${id} sends visible sea waves towards the coast and preserves them across pause and reload`, async ({ page }) => {
@@ -43,6 +46,58 @@ for (const id of ['core:rocket', 'core:tsar-bomba']) {
   });
 }
 
+test('the real Tsar Bomba tool replaces coastal land with visible water and preserves it on reload', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.routeWebSocket('**', socket => socket.close());
+  const world = flatWorld(); world.paused = true;
+  for (let y = 0; y < 48; y++) for (let x = 0; x < 20; x++) world.terrain.set(x, y, Terrain.Water);
+  await page.route('**/coastal-bomb-storage', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Storage setup</title>' }));
+  await page.goto('/coastal-bomb-storage');
+  await page.evaluate(snapshotJSON => new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open('little-world', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('worlds');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result, tx = db.transaction('worlds', 'readwrite');
+      tx.objectStore('worlds').put(JSON.parse(snapshotJSON), 'last');
+      tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+    };
+  }), JSON.stringify(world.snapshot()));
+  await page.goto('/'); await expect(page.locator('#loading-screen')).toBeHidden();
+  const canvas = page.locator('#world'), box = (await canvas.boundingBox())!;
+  const camera = new Camera(); camera.width = box.width; camera.height = box.height; camera.fit(48, 48);
+  const aim = camera.worldToScreen(24, 24), sample = camera.worldToScreen(28.5, 24.5);
+  const looksWet = () => canvas.evaluate((canvas: HTMLCanvasElement, point) => {
+    const ratio = canvas.width / canvas.clientWidth;
+    const [, green, blue] = canvas.getContext('2d')!.getImageData(Math.floor(point.x * ratio), Math.floor(point.y * ratio), 1, 1).data;
+    return blue - green > 10;
+  }, sample);
+  expect(await looksWet()).toBe(false);
+  await page.locator('[data-category="destruction"]').click();
+  await page.getByRole('button', { name: 'Tsar Bomba 100MT', exact: true }).click();
+  await expect(page.locator('#tool-hint')).toContainText('Coastal craters fill with water');
+  await page.mouse.click(box.x + aim.x, box.y + aim.y); await page.keyboard.press('4');
+  const readSave = () => page.evaluate(() => new Promise<WorldSnapshot>((resolve, reject) => {
+    const open = indexedDB.open('little-world', 1);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result, request = db.transaction('worlds').objectStore('worlds').get('last');
+      request.onsuccess = () => { db.close(); resolve(request.result); }; request.onerror = () => reject(request.error);
+    };
+  }));
+  await expect.poll(async () => {
+    const saved = await readSave();
+    return saved.terrain.tiles[24 * 48 + 28] === Terrain.Water && !saved.scenarios.some(s => s.id === 'core:tsar-bomba');
+  }, { timeout: 20000 }).toBe(true);
+  await page.keyboard.press('1'); await expect.poll(looksWet).toBe(true);
+  const flooded = (await readSave()).terrain.tiles.map(tile => tile < Terrain.Sand);
+  expect(flooded.filter(Boolean).length).toBeGreaterThan(20 * 48);
+  await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
+  await expect.poll(looksWet).toBe(true);
+  expect((await readSave()).terrain.tiles.map(tile => tile < Terrain.Sand)).toEqual(flooded);
+  expect(errors).toEqual([]);
+});
+
 for (const id of ['core:hammer-of-dawn', 'core:tsar-bomba']) {
   test(`${id} renders distinct phases, freezes and reloads without replaying the strike`, async ({ page }) => {
     await page.route('**/superweapon-fixture', route => route.fulfill({ contentType: 'text/html', body: '<canvas style="width:1000px;height:700px"></canvas>' }));
@@ -68,11 +123,16 @@ for (const id of ['core:hammer-of-dawn', 'core:tsar-bomba']) {
       world = new World(4831, source.registry, JSON.parse(snapshot)); renderer.draw(world, 9100);
       const reloaded = canvas.toDataURL() === active;
       world.paused = false;
-      for (let tick = 0; tick < 60; tick++) { world.step(); renderer.draw(world, 9200 + tick * 1000 / 30); }
+      for (let tick = 0; tick < (id === 'core:hammer-of-dawn' ? 220 : 60); tick++) { world.step(); renderer.draw(world, 9200 + tick * 1000 / 30); }
       const later = canvas.toDataURL(), burned = world.terrain.tiles.includes(5);
+      let released = true;
+      if (id === 'core:hammer-of-dawn') {
+        world.command({ kind: 'release-tool', toolId: id }); renderer.draw(world, 17000);
+        released = canvas.toDataURL() !== later && !world.scenarios.some((scenario: { id: string }) => scenario.id === id);
+      }
       const fresh = new World(4831, source.registry, data); fresh.paused = true; renderer.draw(fresh, 13000);
-      return { chargeVisible: charge !== empty, activeChanged: active !== charge, laterChanged: later !== active, frozen, stillFrozen, preserved, reloaded, burned, reset: canvas.toDataURL() === empty };
+      return { chargeVisible: charge !== empty, activeChanged: active !== charge, laterChanged: later !== active, frozen, stillFrozen, preserved, reloaded, burned, released, reset: canvas.toDataURL() === empty };
     }, id);
-    expect(result).toEqual({ chargeVisible: true, activeChanged: true, laterChanged: true, frozen: true, stillFrozen: true, preserved: true, reloaded: true, burned: true, reset: true });
+    expect(result).toEqual({ chargeVisible: true, activeChanged: true, laterChanged: true, frozen: true, stillFrozen: true, preserved: true, reloaded: true, burned: true, released: true, reset: true });
   });
 }

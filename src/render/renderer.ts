@@ -1,5 +1,7 @@
 import { aboardFerry, ferryRoutes } from '../core/ferries';
 import { drawFerries } from './ferries';
+import { drawResident } from './residents';
+import { drawConstruction } from './construction';
 import type { ToolDefinition } from '../content/registry';
 import { noise } from '../core/random';
 import { recoveryStage, roadWearStage } from '../core/terrain';
@@ -11,6 +13,7 @@ import { drawSprite, drawStatusBubble, villageColor } from './sprites';
 import { raceOf } from '../core/races';
 import { StatusBubbles, type StatusIcon } from './status-bubbles';
 import { DestructionAnimations } from './destruction';
+import { HouseCollapseAnimations } from './house-collapse';
 import { NapalmAnimations } from './napalm';
 import { SuperweaponAnimations } from './superweapons';
 import { NAPALM_FIRE_ID, napalmStrikes } from '../content/napalm';
@@ -19,10 +22,11 @@ import { localizedSettlementName } from '../content/settlement-names';
 import type { Language } from '../i18n';
 import { Ocean, OCEAN_COLOR } from './ocean';
 import { drawDragon, drawDragonGroundFire, drawDragonShadow } from './dragons';
-import { DRAGON_FIRE_ID } from '../content/dragons';
+import { DRAGON_FIRE_ID, dragonGroundPosition } from '../content/dragons';
 import { NaturalBiome } from '../core/natural-biomes';
 import { drawBiomeDetails, drawBiomeTree } from './natural-biomes';
 import { drawKaiju, drawKaijuBeam, drawKaijuGround } from './kaiju';
+import { kaijuImpact } from '../content/kaiju';
 import { drawThunderstorms } from './thunderstorms';
 import { drawHarbor, drawMooring, drawShip, drawShipWake } from './seafaring';
 import { drawUfo, drawUfoGround } from './ufos';
@@ -48,6 +52,7 @@ export class Renderer {
   private previous = 0;
   private visualSerial = 0;
   private readonly destruction = new DestructionAnimations();
+  private readonly collapses = new HouseCollapseAnimations();
   private readonly napalm = new NapalmAnimations();
   private readonly superweapons = new SuperweaponAnimations();
   private readonly statuses = new StatusBubbles();
@@ -77,7 +82,7 @@ export class Renderer {
     if (this.world !== world) {
       this.world = world;
       this.ground.width = world.terrain.width * TILE; this.ground.height = world.terrain.height * TILE;
-      world.terrain.markAllDirty(); this.particles = []; this.destruction.reset(); this.napalm.reset();
+      world.terrain.markAllDirty(); this.particles = []; this.destruction.reset(); this.collapses.reset(); this.napalm.reset();
     }
     this.ocean.update(world.terrain);
     // A changed ridge also changes the exposed edges of its adjacent tiles.
@@ -180,9 +185,16 @@ export class Renderer {
     const { ctx, camera } = this;
     // Keep blast phases readable at high speeds without delaying simulation damage.
     this.destruction.update(world.paused ? 0 : elapsed * Math.min(world.speed, 2));
+    this.collapses.update(world.paused ? 0 : elapsed * Math.min(world.speed, 2));
     this.napalm.update(world.paused ? 0 : elapsed * Math.min(world.speed, 2));
     ctx.fillStyle = OCEAN_COLOR; ctx.fillRect(0, 0, camera.width, camera.height);
     const origin = camera.origin;
+    const alliance = new Map<number, number>();
+    for (const group of allianceGroups(world.society)) for (const id of group) alliance.set(id, group[0]);
+    for (const visual of visuals) if (visual.kind === 'collapse') {
+      const village = visual.house.components.dwelling?.villageId;
+      this.collapses.start(visual, !world.terrain.isLand(visual.x, visual.y), village ? alliance.get(village) : undefined);
+    }
     for (const visual of visuals) if (visual.kind === 'blast') {
       const x = visual.x * TILE, y = visual.y * TILE, radius = visual.radius * TILE;
       if (origin.x + (x + radius * 2) * camera.zoom < 0 || origin.x + (x - radius * 2) * camera.zoom > camera.width
@@ -196,13 +208,14 @@ export class Renderer {
       const p = entity.components.position!, state = entity.components.kaiju!;
       if (origin.x + p.x * TILE * camera.zoom < -100 || origin.x + p.x * TILE * camera.zoom > camera.width + 100
         || origin.y + p.y * TILE * camera.zoom < -100 || origin.y + p.y * TILE * camera.zoom > camera.height + 100) continue;
-      const force = state.phase === 'beam' ? 1 : Math.max(0, state.stepIn - 0.25) * 8;
+      const force = state.phase === 'beam' ? 1 : kaijuImpact(state) * 1.8;
       shake.x += Math.round(Math.sin(state.age * 43) * force); shake.y += Math.round(Math.cos(state.age * 37) * force);
     }
     ctx.save(); ctx.translate(Math.round(origin.x) + this.destruction.shakeX + shake.x, Math.round(origin.y) + this.destruction.shakeY + shake.y); ctx.scale(camera.zoom, camera.zoom);
     ctx.drawImage(this.ground, 0, 0);
     this.superweapons.ground(ctx, world);
     this.ocean.drawWaves(ctx, world, false);
+    this.collapses.ground(ctx);
     for (const entity of world.query('kaiju', 'position')) {
       const p = entity.components.position!;
       drawKaijuGround(ctx, p, entity.components.kaiju!, !world.terrain.isLand(p.x, p.y));
@@ -218,7 +231,7 @@ export class Renderer {
     const airstrikes = napalmStrikes(world);
     this.napalm.shadows(ctx, airstrikes, world.terrain.width, world.terrain.height);
     for (const entity of world.query('dragon', 'position')) {
-      drawDragonShadow(ctx, entity.components.position!, entity.components.dragon!.heading, world.tick / 30 + entity.id * 0.173, entity.components.dragon!.breath > 0);
+      drawDragonShadow(ctx, dragonGroundPosition(entity.components.position!, entity.components.dragon!), entity.components.dragon!.heading, world.tick / 30 + entity.id * 0.173, entity.components.dragon!.breath > 0);
     }
     for (const entity of world.query('projectile', 'position')) {
       this.destruction.rocketShadow(ctx, entity.components.position!, entity.components.projectile!);
@@ -238,8 +251,6 @@ export class Renderer {
       ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(rally.x * TILE, rally.y * TILE); ctx.lineTo(target.x * TILE, target.y * TILE); ctx.stroke(); ctx.setLineDash([]);
       ctx.strokeRect(point.x * TILE - 16, point.y * TILE - 16, 32, 32);
     }
-    const alliance = new Map<number, number>();
-    for (const group of allianceGroups(world.society)) for (const id of group) alliance.set(id, group[0]);
     const time = world.tick / 30;
     const deckOffsets = new Map<number, Vec2>();
     for (const { ferry } of ferryRoutes(world)) ferry.passengers.forEach((id, n) => {
@@ -247,6 +258,7 @@ export class Renderer {
     });
     const entities = [...world.query('position')].sort((a, b) => a.components.position!.y - b.components.position!.y || a.id - b.id);
     for (const entity of entities) {
+      this.collapses.drawBefore(ctx, entity.components.position!.y * TILE);
       if (entity.components.harbor || entity.components.ship) {
         const owner = entity.components.harbor?.villageId ?? world.entities.get(entity.components.ship?.homeId ?? -1)?.components.harbor?.villageId;
         const color = owner ? villageColor(owner) : undefined;
@@ -291,8 +303,10 @@ export class Renderer {
       const villageId = citizen?.villageId ?? dwelling?.villageId ?? caravan?.fromId;
       if (caravan?.path[caravan.next] && caravan.path[caravan.next].x < p!.x) ctx.scale(-1, 1);
       const race = caravan ? world.society.villages.find(v => v.id === caravan.fromId)?.race ?? 'human' : raceOf(entity);
-      if (sprite !== 'tree' || !drawBiomeTree(ctx, world.terrain.biomeAt(p!.x, p!.y).id, appearance?.variant)) {
-        drawSprite(ctx, sprite, appearance?.variant, time + entity.id, !!person && person.age < 18, caravan ? caravan.food / 12 : farm?.growth, villageId ? villageColor(villageId) : undefined, race);
+      if (person) drawResident(ctx, world, entity, villageId ? villageColor(villageId) : undefined);
+      else if (dwelling?.construction) drawConstruction(ctx, entity, world.tick, villageId ? villageColor(villageId) : undefined);
+      else if (sprite !== 'tree' || !drawBiomeTree(ctx, world.terrain.biomeAt(p!.x, p!.y).id, appearance?.variant)) {
+        drawSprite(ctx, sprite, appearance?.variant, time + entity.id, false, caravan ? caravan.food / 12 : farm?.growth, villageId ? villageColor(villageId) : undefined, race);
       }
       ctx.restore();
       if (submerged) {
@@ -303,24 +317,17 @@ export class Renderer {
           ctx.fillStyle = '#a9dce8'; ctx.fillRect(x - 5, y - 12, 10 * entity.components.health.current / entity.components.health.max, 2);
         }
       }
-      if (dwelling?.villageId) {
+      if (dwelling?.villageId && !dwelling.construction) {
         ctx.fillStyle = '#524a35'; ctx.fillRect(x + 11, y - 21, 1, 22);
         ctx.fillStyle = villageColor(dwelling.villageId); ctx.fillRect(x + 12, y - 21, 7, 5);
         const leader = alliance.get(dwelling.villageId);
         if (leader) { ctx.fillStyle = villageColor(leader); ctx.fillRect(x + 12, y - 14, 7, 3); }
       }
       if (citizen?.task === 'fight') {
-        ctx.fillStyle = '#f0dfb5'; ctx.fillRect(x + 4, y - 9, 1, 7); ctx.fillRect(x + 2, y - 4, 5, 1);
         ctx.fillStyle = '#ce6451'; ctx.fillRect(x - 3, y - 14, 7 * (entity.components.health!.current / entity.components.health!.max), 1);
       } else if (citizen?.task === 'repair' && citizen.repair) {
-        const swing = citizen.path.length ? 0 : Math.floor(time * 4) % 2 * 2;
-        ctx.fillStyle = '#a77c46'; ctx.fillRect(x + 5, y - 8 - swing, 1, 8);
-        ctx.fillStyle = '#d7d8c7'; ctx.fillRect(x + 3, y - 9 - swing, 5, 3);
         ctx.fillStyle = '#454a38'; ctx.fillRect(x - 4, y - 15, 8, 2);
         ctx.fillStyle = '#e4c46f'; ctx.fillRect(x - 4, y - 15, 8 * (1 - citizen.repair.remaining / ROAD_REPAIR_SECONDS), 2);
-      } else if (citizen?.task === 'migrate') {
-        ctx.fillStyle = '#b58b52'; ctx.fillRect(x - 7, y - 8, 5, 7);
-        ctx.fillStyle = '#ebd39b'; ctx.fillRect(x - 6, y - 8, 3, 1);
       } else if (citizen && citizen.hunger >= 75) {
         ctx.fillStyle = '#edaa61'; ctx.fillRect(x, y - 16, 2, 4); ctx.fillRect(x, y - 10, 2, 1);
       }
@@ -331,6 +338,7 @@ export class Renderer {
         if (sprite === 'dynamite') this.destruction.fuse(ctx, x, y, explosive.fuse, entity.id, submerged);
       }
     }
+    this.collapses.drawBefore(ctx);
     if (camera.zoom >= 0.65) for (const village of world.society.villages) {
       const x = village.x * TILE, y = village.y * TILE - 38;
       const name = localizedSettlementName(world.seed, village, language);
@@ -367,7 +375,7 @@ export class Renderer {
     this.napalm.airborne(ctx, airstrikes, world.terrain.width, world.terrain.height);
     this.superweapons.airborne(ctx, world, -origin.y / camera.zoom - 80);
     for (const visual of visuals) {
-      if (visual.kind === 'love' || visual.kind === 'blast') continue;
+      if (visual.kind !== 'birth' && visual.kind !== 'build') continue;
       const count = 12;
       const serial = this.visualSerial++;
       for (let i = 0; i < count && this.particles.length < PARTICLE_LIMIT; i++) {

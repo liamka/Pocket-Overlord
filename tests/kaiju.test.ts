@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { KAIJU, KAIJU_ID, kaijuBeam, kaijuPose } from '../src/content/kaiju';
+import { KAIJU, KAIJU_ID, kaijuBeam, kaijuImpact, kaijuPose } from '../src/content/kaiju';
 import { World } from '../src/core/world';
-import { Terrain, type ToolControl } from '../src/core/types';
+import { SAVE_VERSION, Terrain, type ToolControl } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { advance, flatWorld } from './helpers';
 
@@ -144,5 +144,96 @@ describe('giant kaiju', () => {
     expect(world.entities.has(titan.id)).toBe(false);
     world.command({ kind: 'use-tool', toolId: KAIJU_ID, x: 48, y: 48 });
     expect([...world.query('kaiju')]).toHaveLength(1);
+  });
+
+  it.each([[1, 0], [0, 1], [-1, 0]])('plants supporting feet in world space while moving %s, %s', (x, y) => {
+    const { world, titan, state } = arena(); control(world, { x, y });
+    let planted = 0, lifted = 0, contacts = 0;
+    for (let i = 0; i < 60; i++) {
+      const previous = state.animation && structuredClone(state.animation.feet);
+      world.step();
+      const feet = state.animation!.feet, pose = kaijuPose(titan.components.position!, state);
+      expect(feet.filter(f => f.progress < 1).length).toBeLessThanOrEqual(1);
+      for (let side = 0; side < 2; side++) {
+        if (feet[side].progress < 1) { lifted++; expect(pose.feet[side].height).toBeGreaterThan(0); }
+        if (previous?.[side].progress === 1 && feet[side].progress === 1) {
+          planted++;
+          expect(pose.feet[side].x).toBe(previous[side].toX); expect(pose.feet[side].y).toBe(previous[side].toY);
+          expect(pose.feet[side].height).toBeCloseTo(0);
+        }
+        if (previous && previous[side].progress < 1 && feet[side].progress === 1) {
+          contacts++; expect(kaijuImpact(state)).toBeCloseTo(1);
+        }
+      }
+    }
+    expect(planted).toBeGreaterThan(30); expect(lifted).toBeGreaterThan(20); expect(contacts).toBeGreaterThanOrEqual(3);
+  });
+
+  it('finishes a lifted foot on release and keeps both feet still while breathing', () => {
+    const { world, titan, state } = arena(); control(world, { x: 1 }); advance(world, 0.2);
+    expect(state.animation!.feet.some(f => f.progress < 1)).toBe(true);
+    control(world); const stopped = { ...titan.components.position! }; advance(world, 1.2);
+    expect(titan.components.position).toEqual(stopped); expect(state.animation!.moving).toBe(0);
+    expect(state.animation!.feet.every(f => f.progress === 1)).toBe(true);
+    const feet = structuredClone(state.animation!.feet), pose = kaijuPose(stopped, state);
+    advance(world, 0.6);
+    expect(state.animation!.feet).toEqual(feet); expect(kaijuImpact(state)).toBe(0);
+    expect(kaijuPose(stopped, state).breath).not.toBe(pose.breath);
+  });
+
+  it('turns the torso behind the head and repositions feet without moving the creature', () => {
+    const { world, titan, state } = arena(); control(world); world.step();
+    const position = { ...titan.components.position! };
+    world.command({ kind: 'aim-tool', toolId: KAIJU_ID, x: 30, y: 0 }); advance(world, 0.4);
+    const lag = Math.atan2(Math.sin(state.heading - state.animation!.bodyHeading), Math.cos(state.heading - state.animation!.bodyHeading));
+    expect(Math.abs(lag)).toBeGreaterThan(0.1); expect(Math.abs(state.animation!.turn)).toBeGreaterThan(0.5);
+    advance(world, 1.5);
+    expect(titan.components.position).toEqual(position);
+    expect(state.animation!.feet.every(f => f.progress === 1)).toBe(true);
+    expect(state.animation!.feet.some(f => f.landedAt > 0)).toBe(true);
+    expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
+  });
+
+  it('keeps the jaw and head continuous through charge, beam and recovery, with a distinct firing recoil', () => {
+    const { titan, state } = arena(), p = titan.components.position!;
+    state.phase = 'charge'; state.phaseTime = KAIJU.charge;
+    const charged = kaijuPose(p, state);
+    state.phase = 'beam'; state.phaseTime = 0;
+    const firing = kaijuPose(p, state);
+    expect(Math.abs(charged.headForward - firing.headForward)).toBeLessThan(0.05);
+    expect(Math.abs(charged.opening - firing.opening)).toBeLessThan(0.15);
+    state.phaseTime = 0.1; expect(kaijuPose(p, state).headForward).toBeLessThan(firing.headForward - 0.4);
+    state.phase = 'recover'; state.phaseTime = KAIJU.recover;
+    const recovered = kaijuPose(p, state);
+    state.phase = 'idle'; state.phaseTime = 0;
+    const idle = kaijuPose(p, state);
+    expect(Math.abs(recovered.headForward - idle.headForward)).toBeLessThan(0.01);
+    expect(recovered.opening).toBe(idle.opening);
+    expect(kaijuBeam(p, state).from).toEqual(idle.mouth);
+  });
+
+  it('retains a supporting leg when movement interrupts a pivot or reverses abruptly', () => {
+    const { world, state } = arena(); control(world); world.step();
+    world.command({ kind: 'aim-tool', toolId: KAIJU_ID, x: 30, y: 0 }); advance(world, 0.4);
+    for (let i = 0; i < 60; i++) {
+      if (i % 6 === 0) control(world, { x: i % 18 === 0 ? 0 : i % 12 === 0 ? -1 : 1, y: i % 18 === 0 ? 1 : 0 });
+      world.step();
+      expect(state.animation!.feet.filter(f => f.progress < 1).length).toBeLessThanOrEqual(1);
+    }
+    control(world); advance(world, 1.2);
+    expect(state.animation!.feet.every(f => f.progress === 1)).toBe(true);
+  });
+
+  it('migrates old titans and validates saved foot anchors without accepting future contacts', () => {
+    const { world, titan } = arena(); control(world, { x: 1 }); advance(world, 0.2);
+    const old = world.snapshot(); old.version = 27; delete old.entities.find(e => e.id === titan.id)!.components.kaiju!.animation;
+    const migrated = decodeSave(old, world.registry);
+    expect(migrated.version).toBe(SAVE_VERSION);
+    const restored = new World(world.seed, world.registry, migrated); restored.step();
+    expect(restored.entities.get(titan.id)!.components.kaiju!.animation!.feet).toHaveLength(2);
+    for (const invalid of [{ progress: 2 }, { toX: Infinity }, { landedAt: 1e8 }, { fromHeading: NaN }]) {
+      const save = world.snapshot(); Object.assign(save.entities.find(e => e.id === titan.id)!.components.kaiju!.animation!.feet[0], invalid);
+      expect(() => decodeSave(save, world.registry)).toThrow();
+    }
   });
 });

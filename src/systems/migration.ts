@@ -142,7 +142,10 @@ function found(world: World, group: Migration): Entity[] | undefined {
   const homes = sites.map(p => buildHouse(world, p, raceOf(founder))!);
   const village = assignHouse(world, homes[0]);
   village.food = 0; // All starting supplies come from the expedition, never from free founding food.
-  for (const home of homes) { home.components.dwelling!.villageId = village.id; world.visual({ kind: 'build', ...home.components.position!, radius: 2 }); }
+  for (const home of homes) {
+    home.components.dwelling!.villageId = village.id;
+    home.components.dwelling!.construction = { progress: 0, struckAt: -1 };
+  }
   return homes;
 }
 

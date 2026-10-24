@@ -14,6 +14,47 @@ const readSave = (page: Page) => page.evaluate(() => new Promise<WorldSnapshot>(
   };
 }));
 
+test('walk, torso, tail and charge have distinct poses while idle toes remain planted in every view', async ({ page }) => {
+  await page.route('**/kaiju-pose-fixture', route => route.fulfill({ contentType: 'text/html', body: '<canvas width="800" height="600"></canvas>' }));
+  await page.goto('/kaiju-pose-fixture');
+  const result = await page.evaluate(async () => {
+    const [{ flatWorld }, { drawKaiju, drawKaijuGround }, { kaijuPose }] = await Promise.all([
+      '/tests/helpers.ts', '/src/render/kaiju.ts', '/src/content/kaiju.ts',
+    ].map(path => import(path)));
+    const world = flatWorld(), titan = world.spawn('core:kaiju', { x: 16, y: 24 }), state = titan.components.kaiju;
+    Object.assign(state, { heading: 0, aimX: 47, aimY: 24, goalX: 47, goalY: 24 });
+    const canvas = document.querySelector('canvas')!, ctx = canvas.getContext('2d')!;
+    const command = (x: number, attacking = false) => world.command({ kind: 'control-tool', toolId: 'core:kaiju', x, y: 0, active: true, attacking });
+    const draw = () => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.imageSmoothingEnabled = false;
+      ctx.translate(400, 350); ctx.scale(2, 2); ctx.translate(-titan.components.position.x * 8, -titan.components.position.y * 8);
+      drawKaijuGround(ctx, titan.components.position, state, false); drawKaiju(ctx, titan.components.position, state, false);
+      return canvas.toDataURL();
+    };
+    const crop = (x: number, y: number, w: number, h: number) => Array.from(ctx.getImageData(x, y, w, h).data).join(',');
+    const steps = new Set<string>(), torsos = new Set<string>(), tails = new Set<string>();
+    command(1);
+    for (let i = 0; i < 24; i++) {
+      world.step(); draw(); steps.add(crop(350, 300, 100, 110)); torsos.add(crop(350, 190, 100, 70)); tails.add(crop(120, 295, 150, 70));
+    }
+    command(0); for (let i = 0; i < 50; i++) world.step();
+    draw(); const toes = crop(380, 384, 70, 15), body = canvas.toDataURL();
+    for (let i = 0; i < 18; i++) world.step(); draw();
+    const planted = toes === crop(380, 384, 70, 15), breathing = body !== canvas.toDataURL();
+    command(0, true); const charging = new Set<string>();
+    for (let i = 0; i < 20; i++) { world.step(); charging.add(draw()); }
+    const mouth = kaijuPose(titan.components.position, state).opening;
+    const savedAnimation = state.animation, savedHeading = state.heading;
+    delete state.animation; const directions = new Set<string>();
+    for (let i = 0; i < 8; i++) { state.heading = i * Math.PI / 4; directions.add(draw()); }
+    state.animation = savedAnimation; state.heading = savedHeading;
+    return { steps: steps.size, torsos: torsos.size, tails: tails.size, planted, breathing, charging: charging.size, mouth, directions: directions.size };
+  });
+  expect(result.steps).toBeGreaterThan(15); expect(result.torsos).toBeGreaterThan(15); expect(result.tails).toBeGreaterThan(15);
+  expect(result.planted).toBe(true); expect(result.breathing).toBe(true);
+  expect(result.charging).toBeGreaterThan(15); expect(result.mouth).toBeGreaterThan(0.9); expect(result.directions).toBe(8);
+});
+
 test('kaiju legs, tail, jaw and atomic breath animate and freeze across pause and reload', async ({ page }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.route('**/kaiju-render-fixture', route => route.fulfill({ contentType: 'text/html', body: '<body style="margin:0"><canvas style="width:1100px;height:800px"></canvas></body>' }));
