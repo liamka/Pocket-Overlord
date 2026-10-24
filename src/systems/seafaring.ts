@@ -1,0 +1,200 @@
+import type { World } from '../core/world';
+import { HARBOR_ID, SHIP_ID, angleDelta, canSail, clearSeaSegment, distance, harborBerth, harborSite, seaRoute, type ShipState } from '../core/seafaring';
+import { Terrain, type Entity, type Vec2 } from '../core/types';
+import { reachableTiles } from './navigation';
+
+const village = (world: World, id: number | null) => world.society.villages.find(v => v.id === id);
+const ready = (e: Entity): boolean => !!e.components.harbor && e.components.harbor.built === 1 && !e.components.thermal?.burning;
+const friendly = (world: World, a: Entity, b: Entity): boolean => {
+  const first = a.components.harbor!.villageId, second = b.components.harbor!.villageId;
+  return !world.society.relations.some(r => (r.a === first && r.b === second || r.a === second && r.b === first) && r.status === 'war');
+};
+
+export function buildHarbor(world: World, position: Vec2, villageId?: number): Entity | undefined {
+  const direction = harborSite(world, position);
+  if (direction === undefined) return;
+  const harbor = world.spawn(HARBOR_ID, position);
+  if (harbor) {
+    const owner = world.society.villages.filter(v => distance(v, position) < 24).sort((a, b) => distance(a, position) - distance(b, position))[0];
+    Object.assign(harbor.components.harbor!, { direction, villageId: villageId ?? owner?.id ?? null });
+    world.visual({ kind: 'build', ...position, radius: 3 });
+  }
+  return harbor;
+}
+
+function harbors(world: World, dt: number): void {
+  for (const port of world.query('harbor', 'position')) {
+    const state = port.components.harbor!, p = port.components.position!, berth = harborBerth(port);
+    if (!world.terrain.isLand(p.x, p.y) || world.terrain.at(p.x, p.y) === Terrain.Mountain || !canSail(world, berth)) {
+      world.remove(port.id); continue;
+    }
+    if (!village(world, state.villageId)) state.villageId = null;
+    if (port.components.thermal?.burning) continue;
+    state.built = Math.min(1, state.built + dt / 6);
+    if (state.built < 1) continue;
+    state.launchIn = Math.max(0, state.launchIn - dt);
+    if (state.launchIn > 0) continue;
+    state.launchIn = 8;
+    const fleet = [...world.query('ship')], own = fleet.filter(e => e.components.ship!.homeId === port.id);
+    const hasOtherPort = [...world.query('harbor')].some(e => e.id !== port.id && ready(e) && friendly(world, port, e));
+    if (own.length >= (hasOtherPort ? 2 : 1) || fleet.length >= 48 || fleet.some(e => distance(e.components.position!, berth) < 5)) continue;
+    const ship = world.spawn(SHIP_ID, berth);
+    if (ship) Object.assign(ship.components.ship!, { homeId: port.id, kind: own.some(e => e.components.ship!.kind === 'fishing') ? 'trade' : 'fishing',
+      heading: angleDelta(state.direction * Math.PI / 2 + Math.PI / 2, 0), phase: 'docked', wait: 2 });
+  }
+  if (world.tick % 150 !== 0) return;
+  for (const town of world.society.villages) {
+    if ([...world.query('harbor')].some(e => e.components.harbor!.villageId === town.id)) continue;
+    const adults = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === town.id && e.components.person!.age >= 18);
+    if (adults.length < 3 || world.tick - town.founded < 300) continue;
+    const reachable = reachableTiles(world, adults.map(e => e.components.position!), 28);
+    let site: Vec2 | undefined, score = Infinity;
+    world.terrain.circle(town.x, town.y, 22, (x, y, i) => {
+      if (reachable[i] < 0) return;
+      const p = { x: x + 0.5, y: y + 0.5 }, d = distance(town, p);
+      if (d < score && harborSite(world, p) !== undefined) { site = p; score = d; }
+    });
+    if (site) buildHarbor(world, site, town.id);
+  }
+}
+
+function routeTo(world: World, entity: Entity, goal: Vec2, phase: ShipState['phase'], targetId: number | null): boolean {
+  const path = seaRoute(world, entity.components.position!, goal);
+  if (!path) return false;
+  Object.assign(entity.components.ship!, { path, next: 0, phase, targetId, wait: 0 });
+  return true;
+}
+
+function fishingTrip(world: World, entity: Entity): void {
+  const p = entity.components.position!, ship = entity.components.ship!;
+  const heading = ship.heading + world.rng.range(-0.7, 0.7), range = world.rng.range(10, 22);
+  for (let i = 0; i < 12; i++) {
+    const a = heading + i * Math.PI / 6, goal = { x: p.x + Math.cos(a) * range, y: p.y + Math.sin(a) * range };
+    if (routeTo(world, entity, goal, 'sailing', null)) return;
+  }
+  ship.phase = 'idle'; ship.wait = 5;
+}
+
+function returnToPort(world: World, entity: Entity): boolean {
+  const ship = entity.components.ship!, home = world.entities.get(ship.homeId ?? -1);
+  return !!home && ready(home) && routeTo(world, entity, harborBerth(home), 'returning', home.id);
+}
+
+function depart(world: World, entity: Entity): void {
+  const ship = entity.components.ship!, p = entity.components.position!;
+  if (ship.kind === 'trade') {
+    const ports = [...world.query('harbor')].filter(ready), current = ports.find(e => distance(harborBerth(e), p) < 1);
+    if (current) {
+      const destinations = ports.filter(e => e.id !== current.id && friendly(world, current, e));
+      destinations.sort((a, b) => (a.id === ship.homeId ? -1 : b.id === ship.homeId ? 1 : distance(harborBerth(a), p) - distance(harborBerth(b), p)));
+      for (const other of destinations) {
+        if (!routeTo(world, entity, harborBerth(other), 'sailing', other.id)) continue;
+        const from = village(world, current.components.harbor!.villageId), to = village(world, other.components.harbor!.villageId);
+        if (from && to && from.id !== to.id) {
+          const cargo = Math.max(0, Math.min(24 - ship.cargo, Math.floor((from.food - to.food) / 2), from.food - 24));
+          from.food -= cargo; ship.cargo += cargo;
+        }
+        return;
+      }
+    } else if (returnToPort(world, entity)) return;
+    ship.phase = 'idle'; ship.wait = 5;
+  } else fishingTrip(world, entity);
+}
+
+function arrive(world: World, entity: Entity): void {
+  const ship = entity.components.ship!, target = world.entities.get(ship.targetId ?? -1);
+  ship.path = []; ship.next = 0; ship.speed = 0;
+  if (target && ready(target)) {
+    const owner = village(world, target.components.harbor!.villageId);
+    if (owner) {
+      const delivered = Math.min(ship.cargo, 2000 - owner.food);
+      owner.food += delivered;
+      if (ship.kind === 'fishing') owner.harvested += delivered;
+      ship.cargo -= delivered;
+    } else ship.cargo = 0;
+    ship.phase = 'docked'; ship.wait = 4; ship.targetId = null;
+  } else { ship.phase = 'fishing'; ship.wait = 6; ship.targetId = null; }
+}
+
+function sail(world: World, entity: Entity, dt: number): void {
+  const ship = entity.components.ship!, p = entity.components.position!;
+  const goal = ship.path[ship.next];
+  if (!goal) { arrive(world, entity); return; }
+  const d = distance(p, goal), final = ship.next === ship.path.length - 1;
+  if (d < 0.06) { ship.next++; if (final) arrive(world, entity); return; }
+  const desired = Math.atan2(goal.y - p.y, goal.x - p.x), turn = angleDelta(desired, ship.heading);
+  const maxTurn = 1.25 * dt, change = Math.max(-maxTurn, Math.min(maxTurn, turn));
+  ship.heading = angleDelta(ship.heading + change, 0);
+  ship.turn += (change / maxTurn - ship.turn) * Math.min(1, dt * 4);
+  const cruise = ship.kind === 'trade' ? 2.5 : 2.1;
+  const braking = Math.min(1, Math.sqrt(d / (final ? 3 : 1.4)));
+  const alignment = Math.max(0, Math.cos(turn)) ** 3;
+  let targetSpeed = cruise * braking * alignment;
+  const candidate = { x: p.x + Math.cos(ship.heading) * Math.min(d, Math.max(ship.speed, 0.2) * dt),
+    y: p.y + Math.sin(ship.heading) * Math.min(d, Math.max(ship.speed, 0.2) * dt) };
+  // Starboard passing gives approaching hulls room without reversing their sprites.
+  const ahead = [...world.query('ship', 'position')].find(e => e.id !== entity.id && distance(p, e.components.position!) < 5
+    && Math.abs(angleDelta(Math.atan2(e.components.position!.y - p.y, e.components.position!.x - p.x), ship.heading)) < 0.65);
+  if (ahead && d > 3) {
+    const side = { x: p.x + Math.cos(ship.heading + 0.65) * 1.5, y: p.y + Math.sin(ship.heading + 0.65) * 1.5 };
+    if (clearSeaSegment(world, p, side)) { ship.heading = angleDelta(ship.heading + maxTurn, 0); targetSpeed *= 0.6; }
+    else targetSpeed = 0;
+  }
+  if (!canSail(world, candidate)) {
+    ship.speed = 0;
+    ship.wait = Math.max(0, ship.wait - dt);
+    if (ship.wait === 0) {
+      const destination = ship.path.at(-1)!;
+      const replacement = seaRoute(world, p, destination);
+      if (replacement) { ship.path = replacement; ship.next = 0; }
+      else { ship.path = []; ship.next = 0; ship.phase = 'idle'; ship.targetId = null; }
+      ship.wait = 2;
+    }
+    return;
+  }
+  ship.speed += Math.max(-dt * 2, Math.min(dt * 0.8, targetSpeed - ship.speed));
+  const step = Math.min(d, ship.speed * dt);
+  const next = { x: p.x + Math.cos(ship.heading) * step, y: p.y + Math.sin(ship.heading) * step };
+  if (canSail(world, next)) { Object.assign(p, next); world.spatial.update(entity); }
+  else ship.speed = 0;
+}
+
+export function seafaring(world: World, dt: number): void {
+  harbors(world, dt);
+  for (const entity of world.query('ship', 'position')) {
+    const ship = entity.components.ship!, p = entity.components.position!;
+    for (const mark of ship.wake) mark.age += dt;
+    ship.wake = ship.wake.filter(mark => mark.age <= 3);
+    if (!canSail(world, p)) { ship.speed = 0; ship.sail = Math.max(0, ship.sail - dt); continue; }
+    const home = world.entities.get(ship.homeId ?? -1);
+    if (!home?.components.harbor) ship.homeId = null;
+    if (ship.homeId === null && world.tick % 60 === entity.id % 60) {
+      const ports = [...world.query('harbor', 'position')].filter(ready).sort((a, b) => distance(harborBerth(a), p) - distance(harborBerth(b), p));
+      for (const port of ports) if (seaRoute(world, p, harborBerth(port))) { ship.homeId = port.id; break; }
+    }
+    const target = world.entities.get(ship.targetId ?? -1);
+    if (ship.targetId !== null && (!target?.components.harbor || !ready(target) || home?.components.harbor && !friendly(world, home, target))) {
+      ship.path = []; ship.next = 0; ship.targetId = null; ship.phase = 'idle'; ship.wait = 1;
+      if (!returnToPort(world, entity)) ship.phase = 'idle';
+    }
+    const underway = ship.phase === 'sailing' || ship.phase === 'returning';
+    ship.sail += Math.max(-dt * 0.6, Math.min(dt * 0.45, (underway ? 1 : 0) - ship.sail));
+    if (underway) sail(world, entity, dt);
+    else {
+      ship.speed = Math.max(0, ship.speed - dt * 1.5); ship.turn *= Math.max(0, 1 - dt * 3);
+      ship.wait = Math.max(0, ship.wait - dt);
+      if (ship.wait === 0) {
+        if (ship.phase === 'fishing') {
+          ship.cargo = Math.min(24, ship.cargo + Math.floor(world.rng.range(4, 9)));
+          if (!returnToPort(world, entity)) { ship.phase = 'idle'; ship.wait = 2; if (!ship.homeId) ship.cargo = 0; }
+        } else if (ship.cargo && returnToPort(world, entity)) { /* Deliver before starting another trip. */ }
+        else depart(world, entity);
+      }
+    }
+    const last = ship.wake.at(-1);
+    if (ship.speed > 0.15 && (!last || last.age >= 0.14)) {
+      ship.wake.push({ ...p, heading: ship.heading, age: 0 });
+      if (ship.wake.length > 24) ship.wake.shift();
+    }
+  }
+}

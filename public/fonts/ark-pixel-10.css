@@ -1,0 +1,9 @@
+/* Ark Pixel Font © 2021 TakWolf. SIL OFL 1.1: ./ark-pixel-OFL.txt
+   Source: https://ark-pixel-font.takwolf.com/ark-pixel-10px-proportional-latin.otf.woff2 */
+@font-face {
+  font-family: 'Ark Pixel 10';
+  src: url('./ark-pixel-10px-proportional-latin.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
