@@ -1,5 +1,114 @@
 # Changelog
 
+- [#281] Shape new roads with gentle bends instead of long right-angle turns while preserving continuous routes around obstacles
+- [#280] Make dragons strafe close to the ground, breathe fire downward and leave continuous burning trails.
+- [#279] Replace the settings symbol with a recognizable eight-tooth pixel gear.
+- [#278] Restructure the README as an English game guide with feature sections, controls and quick-start instructions.
+- [#277] Use an integer revision counter and one numbered changelog line per changeset.
+- [#276] Render blue seas with pixelated coastal shelves and depth shading.
+- [#275] Move the version label down another 3 pixels to a -5px bottom offset.
+- [#274] Fix migrants getting stuck behind arrivals when founding a colony, including after reloading.
+- [#273] Make flying saucers return off-screen after 35 seconds with a saved departure animation
+- [#272] Move playback controls above the bottom toolbar, outside its gray background.
+- [#271] Add flying saucers with banked flight, rotating lights and animated green beam attacks
+- [#270] Round road bends and align branches with existing roads for gradual junctions
+- [#269] Add a font comparison page with twelve Latin and Cyrillic typefaces, adjustable samples, and localized game-panel previews.
+- [#268] Show loading percentages based on completed startup and world-creation stages.
+- [#267] Double landscape recovery times again after disasters, including rain-assisted regrowth.
+- [#266] Replace the crab kaiju with an upright reptilian titan, articulated gait, sweeping tail, glowing dorsal plates and atomic breath.
+- [#265] Remove the floating selected-tool indicator.
+- [#264] Add flying dragons with animated wings, fire breath, persistent fires and saved behavior.
+- [#263] Remove mountain ridges from the Yin and Yang biome
+- [#262] Match Tsar Bomba to the WorldBox reference with a fast incandescent mushroom, thick fire ring, dense thermal debris and fragmenting black smoke.
+- [#261] Lower the version label by 3 pixels.
+- [#260] Leave at least 15% of permafrost worlds in natural snow-free clearings
+- [#259] Remove the Controls section and all following sections from the README.
+- [#258] Add biome-specific ground surfaces with ice and frozen soil instead of green permafrost clearings
+- [#257] Redraw dragon and turtle world templates with detailed anatomy, coastal silhouettes and layered mountain ridges
+- [#256] Add a detailed napalm bomber pass, falling canisters and fuel fire animation; shrink the strike area and remove its preview
+- [#255] Halve dynamite, rocket and rain radii, including active effects in older saves
+- [#254] Reduce the gap below the settings and playback controls by 11 pixels.
+- [#253] Pan the map by dragging any mouse button and apply tools only on clicks or stationary holds.
+- [#252] Make explosions in water send out waves, with large bombs creating saved tsunamis that break on coasts and damage nearby shore objects.
+- [#251] Keep Hammer of Dawn firing only while the left mouse button is held
+- [#250] Rename the island shape selector and preview the selected map before creating a world.
+- [#249] Restore font-rendered speed menu labels and enlarge the pixel multiplication sign in the speed button.
+- [#248] Make flying saucers arrive from off-screen corners and ease into the selected location
+- [#247] Build wooden bridges across narrow shallow rivers for residents and caravans
+- [#246] Halve the cadence of wars, alliances, family formation, births, house building, food aid and migration departures.
+- [#245] Lower playback controls closer to the toolbar while keeping compact-screen tabs clear.
+- [#244] Add Tsar Bomba 100MT with a nuclear shockwave, mushroom cloud and temporary radioactive fallout
+- [#243] Animate Kaiju with planted footsteps, weight shifts, turning inertia, articulated attack anticipation and recoil, and contact-driven dust and splashes.
+- [#242] Add elves, orcs and dwarves with distinct appearances, homes, lifespans, combat, diplomacy and inherited civilization identity.
+- [#241] Move Thunderstorm to Destruction and remove empty tool tabs.
+- [#240] Triple mouse-wheel zoom sensitivity for faster zooming in and out.
+- [#239] Check escape activation before a resident can reach safety in the hazard simulation test.
+- [#238] Add detailed Phoenix, Kraken, Tree of Life and Whale templates to automatic world generation
+- [#237] Hide the successful world-save message and its status row.
+- [#236] Animate dragons with broad articulated wingbeats, trailing tails, elevated shadows and travelling fire puffs inspired by the video reference
+- [#235] Route new roads through valleys and clearings, avoiding mountains and leaving room along shores
+- [#234] Make ships wait clear of occupied harbors and dock one at a time without overlapping.
+- [#233] Switch loading messages to Menlo with local monospace fallbacks.
+- [#232] Show loading screens during startup, saved-world restoration and new-world creation.
+- [#231] Let residents escape disasters, extinguish nearby fires and give first aid with visible response animations.
+- [#230] Keep biome selection open until the player explicitly confirms or cancels world creation
+- [#229] Animate residents with distance-driven walking and articulated work poses; build homes in stages with working, persistent builders.
+- [#228] Add selectable Dragon and Turtle world templates with persistent mountain terrain.
+- [#227] Organize all powers into four tabs: biomes, peoples and creatures, nature, and destruction.
+- [#226] Draw pixel SVG arrows for the time controls so their shape no longer depends on the interface font.
+- [#225] Add a natural biome selector when creating a new world
+- [#224] Gradually overgrow unused roads while preserving routes used by residents and caravans
+- [#223] Let napalm bombers approach from eight directions with aligned drops and saved flight paths
+- [#222] Use a system typewriter font for loading messages before web fonts arrive.
+- [#221] Let Hammer of Dawn smoothly follow the pointer and burn a moving trail while preserving its aim through saves
+- [#220] Fade the initial empty-world hint after two seconds of visibility, independently of simulation speed.
+- [#219] Add four bold tool browser concepts with a world wheel, power cartridges, card fan and living atlas.
+- [#218] Replace rain with thunderstorms whose lightning ignites people, buildings and other flammable objects.
+- [#217] Use a pixel skull icon for the Destruction tab.
+- [#216] Add editable world seeds with previews, random seed selection and copying.
+- [#215] Widen the pixel zero in the speed button by two screen pixels.
+- [#214] Move the settings button from the bottom toolbar to the upper-right corner.
+- [#213] Add an interactive gallery with six tool panel design alternatives.
+- [#212] Add detailed rocket exhaust, burning dynamite fuses and distinct explosion animations
+- [#211] Replace Pixelify Sans with locally bundled Ark Pixel 10 across the game, map labels, loading screen, and preview pages.
+- [#210] Generate new worlds automatically from the authored templates without a shape picker.
+- [#209] Place the settings button directly above the playback controls with a 12-pixel gap.
+- [#208] Refresh blast and benchmark test scenes, allow time for integration checks, and keep benchmarks out of release tests.
+- [#207] Add Napalm Airstrike with sequential carpet bombing, lingering fires and saved strike progress
+- [#206] Slow Hammer of Dawn beam movement to half its previous speed.
+- [#205] Keep road repair workers moving until they reach working distance
+- [#204] Remove the Tree of Life template from world generation
+- [#203] Add coastal harbors, fishing and trade ships with articulated sails, smooth sailing, mooring and persistent wakes.
+- [#202] Randomize nature and biome selections whenever the new-world dialog opens.
+- [#201] Move the dragon power to the Destruction tab.
+- [#200] Keep destroyed homes as saved ruins, rebuild safe plots and relocate displaced households to reachable shelter.
+- [#199] Raise playback controls by 24 pixels at every screen width.
+- [#198] Add an animated giant crab kaiju with player controls, autonomous rampages, crushing footsteps and twin energy beams.
+- [#197] Restore per-change Changesets records and consume them into a dated changelog during make release.
+- [#196] Draw speed values and the multiplication sign as pixel SVGs in the time button and speed menu, with accessible text labels.
+- [#195] Lower the settings and playback controls by 3 pixels and restore the version label inside the window.
+- [#194] Make Tsar Bomba more dramatic with a heavy descent, blinding fireball, layered shockwaves, rolling mushroom cloud, debris and lingering ash.
+- [#193] Let residents rebuild damaged wooden bridges from reachable banks
+- [#192] Double new worlds to 512 by 384 tiles and support their saves and camera zoom.
+- [#191] Add ferry landings and boat transport for residents and caravans across wide rivers
+- [#190] Add Hammer of Dawn with a sustained orbital beam, seared terrain and saved strike phases
+- [#189] Move the version label down another 3 pixels to a -8px bottom offset.
+- [#188] Replace the font comparison catalogue with eight new pixel fonts and the current pixel font as a reference.
+- [#187] Make dragons fly in from screen corners and return off-screen after 35 seconds
+- [#186] Lower the version label by another 3 pixels.
+- [#185] Animate articulated dragon wings, body, tail, legs and fire-breathing jaws with matching shadows.
+- [#184] Enlarge the version label to 16px and display it with the ver prefix.
+- [#183] Animate destroyed homes with sagging roofs, falling walls, bouncing fragments and settling dust while preserving each home's architecture and construction stage.
+- [#182] Let rockets approach from eight directions and preserve their course in saved worlds
+- [#181] Use the default cursor for disabled speed arrows at the minimum and maximum game speeds.
+- [#180] Remember the selected tool and its tab across page reloads.
+- [#179] Let Tsar Bomba destroy coastal land and permanently flood craters connected to water
+- [#178] Add six large-catalog panel concepts with 432 demo items, search, favorites and quick access.
+- [#177] Add a Yin and Yang world with contrasting terrain, an S-shaped channel and opposite island eyes
+- [#176] Add the existing Pocket World cover and illustrated section headings to the README.
+- [#175] Skip the test suite during make release while retaining the required build and local packaging checks.
+- [#174] Enable a localized biome picker for new worlds in debug mode with changelog=1
+- [#173] Add natural biomes with climate regions, seed brushes, distinct vegetation and soil effects
 - [#172] Move the world statistics panel to the upper-left corner. Remove the in-game Pocket World banner and island subtitle.
 - [#171] Maintain a dated changelog with categorized entries for each completed revision.
 - [#170] Fixes
