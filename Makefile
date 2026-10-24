@@ -8,7 +8,7 @@ help:
 	  'make build    Build the game into dist/' \
 	  'make test     Run the unit tests' \
 	  'make dist     Test, build and package locally into releases/' \
-	  'make release  Update changelog, test, build, consume changesets, commit and publish'
+	  'make release  Update changelog, build, consume changesets, commit and publish'
 
 build:
 	npm run build

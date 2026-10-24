@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRegistry } from '../src/content/defaults';
 import { FixedClock } from '../src/core/clock';
-import { EVENT_BUDGET, POPULATION_LIMIT, SIMULATION_SPEEDS, Terrain } from '../src/core/types';
+import { EVENT_BUDGET, POPULATION_LIMIT, SIMULATION_SPEEDS, STEP, Terrain } from '../src/core/types';
 import { World } from '../src/core/world';
 import { decodeSave } from '../src/persistence/schema';
 import { applyEvent, processEvents } from '../src/systems/effects';
@@ -354,11 +354,12 @@ describe('people and settlements', () => {
     citizen.task = 'visit'; citizen.targetId = home.id; citizen.path = [{ x: 28, y: 20 }]; citizen.reconsiderIn = 10;
     const hazard = world.spawn(danger === 'fire' ? 'core:tree' : `core:${danger}`, { x: 23, y: 20 })!;
     if (danger === 'fire') applyEvent(world, { kind: 'heat', target: hazard.id, amount: 100 });
-    advance(world, 0.8);
-    expect(human.components.position!.x).toBeLessThan(20);
-    expect(world.terrain.isLand(human.components.position!.x, human.components.position!.y)).toBe(true);
+    world.step();
     expect(citizen.emergency?.kind).toBe('flee');
     expect(citizen.task).toBe('idle'); expect(citizen.targetId).toBeNull(); expect(citizen.path).toEqual([]);
+    advance(world, 0.8 - STEP);
+    expect(human.components.position!.x).toBeLessThan(20);
+    expect(world.terrain.isLand(human.components.position!.x, human.components.position!.y)).toBe(true);
   });
   it('builds, shares housing and produces children with a pair and free space', () => {
     const world = flatWorld();

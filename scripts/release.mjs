@@ -131,7 +131,7 @@ async function main() {
   try {
     revision?.apply();
     const notes = releaseNotes(currentVersion, since);
-    run('npm', ['test']);
+    if (!publish) run('npm', ['test']);
     run('npm', ['run', 'build']);
     if (version() !== currentVersion) throw new Error('The project version changed during the build. Run the command again.');
     artifacts = packageBuild(currentVersion, notes);

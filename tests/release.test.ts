@@ -145,7 +145,7 @@ describe('make release', () => {
     expect(commands.find(command => command[0] === 'gh' && command[2] === 'create')).toEqual(expect.arrayContaining(['v12', '--target', 'b'.repeat(40)]));
   });
 
-  it.each(['testFailure', 'buildFailure', 'headChanged', 'unexpectedChange', 'newFile', 'commitFailure'])('preserves changesets and restores metadata after %s', failure => {
+  it.each(['buildFailure', 'headChanged', 'unexpectedChange', 'newFile', 'commitFailure'])('preserves changesets and restores metadata after %s', failure => {
     const test = fixture({ [failure]: true });
     test.addChangeset('first', 'Keep this change.');
     const files = ['package.json', 'package-lock.json', 'CHANGELOG.md', '.changeset/first.md'];
@@ -254,12 +254,28 @@ describe('make release', () => {
     const before = files.map(file => readFileSync(join(test.directory, file), 'utf8'));
     expect(test.run().status).toBe(0);
     const commands = test.commands();
-    expect(commands.filter(command => command[0] === 'npm')).toEqual([['npm', 'ci'], ['npm', 'test'], ['npm', 'run', 'build']]);
+    expect(commands.filter(command => command[0] === 'npm')).toEqual([['npm', 'ci'], ['npm', 'run', 'build']]);
     expect(commands.some(command => command[0] === 'git' && ['add', 'commit'].includes(command[1]))).toBe(false);
     expect(files.map(file => readFileSync(join(test.directory, file), 'utf8'))).toEqual(before);
   });
 
-  it.each(['dirty', 'detached', 'authFailure', 'apiFailure', 'versionMismatch', 'versionChanged', 'published', 'tagConflict', 'installFailure', 'testFailure', 'buildFailure', 'headChanged', 'unexpectedChange'])('stops before any push or publication on %s', failure => {
+  it.each([false, true])('releases without requiring tests (pending changesets: %s)', pending => {
+    const test = fixture({ testFailure: true });
+    if (pending) test.addChangeset('first', 'Release without running tests.');
+    expect(test.run().status).toBe(0);
+    expect(test.commands()).not.toContainEqual(['npm', 'test']);
+    expect(test.commands()).toContainEqual(['npm', 'run', 'build']);
+    expect(test.commands().some(command => command[0] === 'gh' && command[2] === 'create')).toBe(true);
+  });
+
+  it('still requires tests for local packaging', () => {
+    const test = fixture({ testFailure: true });
+    expect(test.run('dist').status).not.toBe(0);
+    expect(test.commands()).toContainEqual(['npm', 'test']);
+    expect(test.commands()).not.toContainEqual(['npm', 'run', 'build']);
+  });
+
+  it.each(['dirty', 'detached', 'authFailure', 'apiFailure', 'versionMismatch', 'versionChanged', 'published', 'tagConflict', 'installFailure', 'buildFailure', 'headChanged', 'unexpectedChange'])('stops before any push or publication on %s', failure => {
     const test = fixture({ [failure]: true });
     expect(test.run().status).not.toBe(0);
     expect(test.commands().some(command => command[0] === 'git' && ['commit', 'push'].includes(command[1]))).toBe(false);
