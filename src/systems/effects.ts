@@ -2,6 +2,7 @@ import { aboardFerry } from '../core/ferries';
 import type { Registry } from '../content/registry';
 import { integer, number, record } from '../core/validation';
 import type { World } from '../core/world';
+import { destroyHome } from './recovery';
 import { LANDSCAPE_RECOVERY_RATE } from '../core/terrain';
 import { ENTITY_LIMIT, EVENT_BUDGET, isBridge, Terrain, WORLD_HEIGHT, WORLD_WIDTH, type Entity, type GameEvent, type Vec2 } from '../core/types';
 
@@ -159,6 +160,7 @@ export function registerEffects(registry: Registry): void {
       if (health.current <= 0) {
         if (entity.components.dwelling && entity.components.position) {
           world.visual({ kind: 'collapse', ...entity.components.position, radius: 5, house: structuredClone(entity), tick: world.tick });
+          destroyHome(world, entity); return;
         }
         if (entity.components.explosive) detonate(world, entity);
         else world.remove(entity.id);

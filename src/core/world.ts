@@ -114,6 +114,7 @@ export class World {
       const citizen = other.components.citizen!;
       if (citizen.partnerId === id) citizen.partnerId = null;
       if (citizen.targetId === id) { citizen.targetId = null; citizen.path = []; citizen.reconsiderIn = 0; citizen.task = 'idle'; }
+      if (citizen.emergency?.targetId === id) { delete citizen.emergency; citizen.reconsiderIn = 0; }
     }
   }
   nearby(point: Vec2, radius: number): Entity[] { return this.spatial.query(point, radius, this.entities); }

@@ -7,7 +7,7 @@ import { initialResidentAnimation, residentAction, type ResidentAction } from '.
 type Point = readonly [number, number];
 export interface ResidentPose extends Partial<ResidentAnimation> {
   time?: number; variant?: number; race?: RaceId; child?: boolean; color?: string;
-  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword'; load?: 'planks' | 'pack';
+  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'bucket' | 'bandage'; load?: 'planks' | 'pack';
 }
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w = 1, h = 1): void => {
   ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
@@ -41,7 +41,7 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   const walking = action === 'walk' || action === 'carry', swimming = action === 'swim';
   const blend = walking ? moving : 0, swing = Math.sin(stride), facing = Math.cos(heading) < -0.05 ? -1 : 1;
   const back = Math.sin(heading) < -0.4, front = Math.abs(Math.cos(heading)) < 0.45;
-  const working = action === 'build' || action === 'repair' || action === 'farm' || action === 'fight';
+  const working = action === 'build' || action === 'repair' || action === 'farm' || action === 'fight' || action === 'extinguish' || action === 'aid';
   const contact = working ? Math.max(0, 1 - Math.abs(work - 0.65) / 0.17) : 0;
   const bob = -Math.abs(swing) * 0.65 * blend + (action === 'idle' ? Math.sin(time * 2.3) * 0.16 : 0) + contact * 0.55;
   const lean = facing * contact * 0.8 + Math.cos(heading) * blend * 0.25;
@@ -120,6 +120,16 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
       pixel(ctx, '#dbba7b', -6 + lean + i % 2, chestY - 1 + i * 2, 12, 1);
     }
     pixel(ctx, '#89795a', -2 + lean, chestY - 1, 1, 6); pixel(ctx, '#89795a', 4 + lean, chestY - 1, 1, 6);
+  } else if (pose.tool === 'bucket' || action === 'extinguish') {
+    pixel(ctx, '#475b61', hand[0] - 2, hand[1], 6, 5); pixel(ctx, '#a9bfbc', hand[0] - 1, hand[1] + 1, 4, 3);
+    pixel(ctx, '#8ad8ef', hand[0] - 1, hand[1], 4, 1);
+    if (action === 'extinguish') for (let i = 0; i < 12; i++) {
+      const phase = (work + i / 12) % 1, reach = phase * 28;
+      pixel(ctx, i % 2 ? '#b9f1f5' : '#74bdd9', hand[0] + Math.cos(heading) * reach,
+        hand[1] + Math.sin(heading) * reach - Math.sin(phase * Math.PI) * 9 + phase * 4, 2, 1);
+    }
+  } else if (pose.tool === 'bandage' || action === 'aid') {
+    pixel(ctx, '#f0e7cc', hand[0], hand[1], 4, 3); pixel(ctx, '#8aac88', hand[0] + 1, hand[1], 1, 3);
   } else if (pose.tool || working) {
     const tool = pose.tool ?? (action === 'farm' ? 'hoe' : action === 'fight' ? 'sword' : 'hammer');
     const angle = working ? toolAngle : 1.2 + swing * blend * 0.12, length = tool === 'hoe' ? 7 : 4;
@@ -147,5 +157,6 @@ export function drawResident(ctx: CanvasRenderingContext2D, world: World, entity
   const action = residentAction(world, entity);
   drawResidentSprite(ctx, { ...(person.animation ?? initialResidentAnimation(entity.components.motion?.heading)), action,
     time: world.tick / 30 + entity.id * 0.37, variant: entity.components.appearance?.variant, race: raceOf(entity), child: person.age < 18, color,
-    load: c?.task === 'migrate' ? 'pack' : 'planks', tool: c?.task === 'build' || c?.task === 'repair' ? 'hammer' : c?.task === 'farm' ? 'hoe' : c?.task === 'fight' ? 'sword' : undefined });
+    load: c?.task === 'migrate' ? 'pack' : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
+      : c?.task === 'build' || c?.task === 'repair' ? 'hammer' : c?.task === 'farm' ? 'hoe' : c?.task === 'fight' ? 'sword' : undefined });
 }

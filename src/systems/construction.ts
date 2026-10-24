@@ -16,7 +16,7 @@ const stop = (entity: Entity): void => {
 function eligible(world: World, entity: Entity, house: Entity): boolean {
   const { person, citizen, position } = entity.components, home = house.components.dwelling, p = house.components.position;
   return !!person && !!citizen && !!position && !!home?.construction && !!p && person.age >= 18 && citizen.hunger < 80
-    && !entity.components.thermal?.burning && !house.components.thermal?.burning && citizen.task !== 'migrate'
+    && !citizen.emergency && !entity.components.thermal?.burning && !house.components.thermal?.burning && citizen.task !== 'migrate'
     && !aboardFerry(world, entity.id) && raceOf(entity) === raceOf(house)
     && !atWar(world, citizen.villageId, home.villageId) && world.safeLand(p, 1)
     && world.terrain.isLand(position.x, position.y) && !danger(world, position) && !danger(world, p);
@@ -68,10 +68,11 @@ export function construction(world: World, dt: number): void {
     const { person, citizen: c, position: p } = entity.components;
     const animation = person!.animation ??= initialResidentAnimation(entity.components.motion?.heading);
     const action = residentAction(world, entity), house = world.entities.get(c!.targetId ?? -1);
-    const working = ['build', 'repair', 'farm', 'fight'].includes(action);
+    const working = ['build', 'repair', 'farm', 'fight', 'extinguish', 'aid'].includes(action);
     if (!working) { animation.work = 0; continue; }
     if (action === 'build' && (!house || !eligible(world, entity, house))) { stop(entity); continue; }
-    const target = c!.repair ? { x: c!.repair.tile % world.terrain.width + 0.5, y: Math.floor(c!.repair.tile / world.terrain.width) + 0.5 } : house?.components.position;
+    const target = c!.emergency ? world.entities.get(c!.emergency.targetId ?? -1)?.components.position
+      : c!.repair ? { x: c!.repair.tile % world.terrain.width + 0.5, y: Math.floor(c!.repair.tile / world.terrain.width) + 0.5 } : house?.components.position;
     if (target) {
       const turn = angleDelta(Math.atan2(target.y - p!.y, target.x - p!.x), animation.heading);
       animation.heading = angleDelta(animation.heading + Math.max(-dt * 8, Math.min(dt * 8, turn)), 0);

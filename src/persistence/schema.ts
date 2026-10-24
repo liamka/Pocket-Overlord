@@ -157,6 +157,8 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
   }) : save.scenarios })],
   // Old titans acquire planted-foot poses on their next simulation step.
   [27, save => ({ ...save, version: 28 })],
+  // Disaster response and displaced households are optional in older worlds.
+  [28, save => ({ ...save, version: 29 })],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
@@ -318,6 +320,8 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       && Number(entity.components.dwelling.construction.struckAt) > Number(save.tick)) fail();
     if (record(entity.components.person)) {
       population++;
+      const displaced = entity.components.person.displaced;
+      if (record(displaced) && (Number(displaced.since) > Number(save.tick) || Number(displaced.homeId) >= Number(save.nextEntityId))) fail();
       const homeId = entity.components.person.homeId;
       if (homeId !== null) inhabitants.set(Number(homeId), (inhabitants.get(Number(homeId)) ?? 0) + 1);
     }
@@ -334,7 +338,9 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (record(citizen)) {
       if ((citizen.parents as number[]).includes(entity.id) || (citizen.path as { x: number; y: number }[]).some(p => p.x >= width || p.y >= height)) fail();
       if (record(citizen.repair) && Number(citizen.repair.tile) >= width * height) fail();
+      if (record(citizen.emergency) && (citizen.emergency.path as { x: number; y: number }[]).some(p => p.x >= width || p.y >= height)) fail();
     }
+    if (record(components.ruin) && (Number(components.ruin.destroyedAt) > Number(save.tick) || Number(components.ruin.homeId) >= Number(save.nextEntityId))) fail();
     const caravan = components.caravan;
     if (record(caravan) && (!record(p) || !villages.has(Number(caravan.fromId)) || caravan.toId !== null && !villages.has(Number(caravan.toId))
       || (caravan.path as { x: number; y: number }[]).some(p => p.x >= width || p.y >= height))) fail();
@@ -361,7 +367,7 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
   for (const group of society.migrations) {
     if (!record(group) || !integer(group.id, 1) || group.id >= Number(society.nextMigrationId) || migrationIds.has(group.id)
       || !integer(group.fromId, 1) || !villages.has(group.fromId)
-      || group.toId !== null && (!integer(group.toId, 1) || !villages.has(group.toId) || group.toId === group.fromId)
+      || group.toId !== null && (!integer(group.toId, 1) || !villages.has(group.toId))
       || !record(group.destination) || !number(group.destination.x, 0, width - 0.001) || !number(group.destination.y, 0, height - 0.001)
       || !Array.isArray(group.members) || group.members.length < 1 || group.members.length > 10
       || !Array.isArray(group.homeIds) || group.homeIds.length > 1 || group.toId === null && group.homeIds.length !== 0
@@ -396,6 +402,12 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
         || (site.race ?? 'human') !== (person.race ?? 'human')) fail();
     }
     if (c.targetId !== null && !ids.has(Number(c.targetId))) fail();
+    if (record(c.emergency) && c.emergency.targetId !== null) {
+      const target = byId.get(Number(c.emergency.targetId));
+      if (!target || c.emergency.targetId === entity.id || !record(person) || Number(person.age) < 18
+        || c.emergency.kind === 'aid' && (!record(target.person) || !record(target.health))
+        || c.emergency.kind === 'extinguish' && !record(target.thermal)) fail();
+    }
     if (c.partnerId !== null) {
       const partnerComponents = byId.get(Number(c.partnerId));
       const partner = partnerComponents?.citizen;

@@ -62,6 +62,31 @@ describe('family migration and pioneering', () => {
     }
   });
 
+  it('walks around waiting pioneers and completes the colony after reloading a crowded arrival', () => {
+    const world = pioneerWorld(); world.tick = 150; migrations(world);
+    const group = world.society.migrations[0], offsets = [[1, 2.98], [1.42, 2.77], [1.79, 2.41], [1.75, 3.04]];
+    for (const [index, id] of group.members.entries()) {
+      const member = world.entities.get(id)!, [x, y] = offsets[index];
+      Object.assign(member.components.position!, { x: group.destination.x + x, y: group.destination.y + y });
+      world.spatial.update(member);
+    }
+    const lastId = group.members.at(-1)!;
+    expect(Math.hypot(offsets[3][0], offsets[3][1])).toBeGreaterThan(3.2);
+    const save = decodeSave(world.snapshot(), world.registry), restored = new World(save.seed, world.registry, save);
+    for (let i = 0; i < 300; i++) {
+      const last = world.entities.get(lastId)!, previous = { ...last.components.position! };
+      world.step(); restored.step();
+      const position = last.components.position!;
+      expect(Math.hypot(position.x - previous.x, position.y - previous.y)).toBeLessThanOrEqual(last.components.motion!.speed / 30 + 1e-9);
+      expect(world.canStand(position, 0.17, last.id)).toBe(true);
+    }
+    expect(world.society.migrations).toHaveLength(0);
+    expect(world.society.villages).toHaveLength(2);
+    expect(group.members.every(id => world.entities.get(id)!.components.citizen!.villageId === world.society.villages[1].id)).toBe(true);
+    expect(restored.snapshot()).toEqual(world.snapshot());
+    expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
+  });
+
   it('seeks safe housing during war and when a home is lost even with sufficient food', () => {
     for (const reason of ['war', 'homeless'] as const) {
       const world = reason === 'war' ? diplomaticWorld(3) : migrationWorld(); world.society.villages[0].food = 100;

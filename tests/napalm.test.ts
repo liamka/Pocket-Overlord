@@ -49,9 +49,21 @@ describe('Napalm Airstrike', () => {
     expect(napalmStrikes(world)[0].bombs).toHaveLength(0);
     advance(world, 1);
     expect(world.scenarios).toHaveLength(0);
+  });
+
+  it.each(Array.from({ length: 8 }, (_, direction) => direction))('keeps blast damage within the strip on bare ground (direction %i)', direction => {
+    const world = strikeWorld();
+    useNapalm(world);
+    const strike = napalmStrikes(world)[0]; strike.heading = direction * Math.PI / 4;
+    advance(world, NAPALM_END + 0.1);
+    expect(blasts(world)).toHaveLength(NAPALM.count);
     const damaged = world.terrain.tiles.flatMap((tile, i) => tile === Terrain.Crater || tile === Terrain.Scorched ? [i] : []);
-    expect(damaged.every(i => Math.abs(along(i % 128 + 0.5, Math.floor(i / 128) + 0.5)) <= 65 / 3
-      && Math.abs(across(i % 128 + 0.5, Math.floor(i / 128) + 0.5)) <= 22 / 3)).toBe(true);
+    expect(damaged.length).toBeGreaterThan(0);
+    for (const i of damaged) {
+      const dx = i % world.terrain.width + 0.5 - strike.x, dy = Math.floor(i / world.terrain.width) + 0.5 - strike.y;
+      expect(Math.abs(dx * Math.cos(strike.heading) + dy * Math.sin(strike.heading))).toBeLessThanOrEqual(65 / 3 + 1e-9);
+      expect(Math.abs(-dx * Math.sin(strike.heading) + dy * Math.cos(strike.heading))).toBeLessThanOrEqual(22 / 3 + 1e-9);
+    }
   });
 
   it('keeps igniting nearby objects after the explosions and expires without leaving invisible fires', () => {

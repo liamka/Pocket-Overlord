@@ -2,6 +2,7 @@ import { aboardFerry, ferryRoutes } from '../core/ferries';
 import { drawFerries } from './ferries';
 import { drawResident } from './residents';
 import { drawConstruction } from './construction';
+import { drawRuin } from './recovery';
 import type { ToolDefinition } from '../content/registry';
 import { noise } from '../core/random';
 import { recoveryStage, roadWearStage } from '../core/terrain';
@@ -304,6 +305,7 @@ export class Renderer {
       if (caravan?.path[caravan.next] && caravan.path[caravan.next].x < p!.x) ctx.scale(-1, 1);
       const race = caravan ? world.society.villages.find(v => v.id === caravan.fromId)?.race ?? 'human' : raceOf(entity);
       if (person) drawResident(ctx, world, entity, villageId ? villageColor(villageId) : undefined);
+      else if (entity.components.ruin) drawRuin(ctx, entity);
       else if (dwelling?.construction) drawConstruction(ctx, entity, world.tick, villageId ? villageColor(villageId) : undefined);
       else if (sprite !== 'tree' || !drawBiomeTree(ctx, world.terrain.biomeAt(p!.x, p!.y).id, appearance?.variant)) {
         drawSprite(ctx, sprite, appearance?.variant, time + entity.id, false, caravan ? caravan.food / 12 : farm?.growth, villageId ? villageColor(villageId) : undefined, race);
@@ -323,7 +325,13 @@ export class Renderer {
         const leader = alliance.get(dwelling.villageId);
         if (leader) { ctx.fillStyle = villageColor(leader); ctx.fillRect(x + 12, y - 14, 7, 3); }
       }
-      if (citizen?.task === 'fight') {
+      if (citizen?.emergency) {
+        const kind = citizen.emergency.kind;
+        ctx.fillStyle = kind === 'flee' ? '#f5b45b' : kind === 'aid' ? '#9cddad' : '#95d9ef';
+        if (kind === 'aid') { ctx.fillRect(x - 1, y - 19, 2, 6); ctx.fillRect(x - 3, y - 17, 6, 2); }
+        else if (kind === 'flee') { ctx.fillRect(x, y - 20, 2, 5); ctx.fillRect(x, y - 13, 2, 1); }
+        else { ctx.fillRect(x, y - 20, 1, 2); ctx.fillRect(x - 1, y - 18, 3, 3); }
+      } else if (citizen?.task === 'fight') {
         ctx.fillStyle = '#ce6451'; ctx.fillRect(x - 3, y - 14, 7 * (entity.components.health!.current / entity.components.health!.max), 1);
       } else if (citizen?.task === 'repair' && citizen.repair) {
         ctx.fillStyle = '#454a38'; ctx.fillRect(x - 4, y - 15, 8, 2);

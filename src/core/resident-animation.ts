@@ -2,7 +2,7 @@ import type { Entity, ResidentAnimation, Vec2 } from './types';
 import type { World } from './world';
 import { aboardFerry } from './ferries';
 
-export type ResidentAction = 'idle' | 'walk' | 'carry' | 'build' | 'repair' | 'farm' | 'fight' | 'swim';
+export type ResidentAction = 'idle' | 'walk' | 'carry' | 'build' | 'repair' | 'farm' | 'fight' | 'swim' | 'extinguish' | 'aid';
 export const HAMMER_CONTACT = 0.62;
 export const angleDelta = (a: number, b: number): number => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 export function initialResidentAnimation(heading = 0): ResidentAnimation {
@@ -30,6 +30,12 @@ export function residentAction(world: World, entity: Entity): ResidentAction {
   const { person, position: p, citizen: c } = entity.components;
   if (!person || !p || aboardFerry(world, entity.id)) return 'idle';
   if (!world.terrain.isLand(p.x, p.y)) return 'swim';
+  if (c?.emergency) {
+    if ((person.animation?.moving ?? 0) > 0.08) return 'walk';
+    const state = c.emergency, target = world.entities.get(state.targetId ?? -1), q = target?.components.position;
+    if (state.kind !== 'flee' && q && !state.path.length && Math.hypot(p.x - q.x, p.y - q.y) <= (state.kind === 'extinguish' ? 3.95 : 1.75)) return state.kind;
+    return 'idle';
+  }
   if ((person.animation?.moving ?? 0) > 0.08) return c?.task === 'build' || c?.task === 'migrate' ? 'carry' : 'walk';
   if (!c || person.age < 18 || entity.components.thermal?.burning || c.path.length) return 'idle';
   if (c.task === 'repair' && c.repair) {

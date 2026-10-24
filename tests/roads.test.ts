@@ -318,7 +318,7 @@ function startWork(world: World): void {
 }
 
 describe('road destruction and repair', () => {
-  it.each([['core:dynamite', 2, 4, 7], ['core:rocket', 1.25, 7, 10]] as const)('%s destroys both the centre and the outer road surface after its fuse', (toolId, fuse, edge, outside) => {
+  it.each([['core:dynamite', 2, 2, 3], ['core:rocket', 1.25, 4, 5]] as const)('%s destroys both the centre and the outer road surface after its fuse', (toolId, fuse, edge, outside) => {
     const world = flatWorld();
     for (let x = 2; x < 46; x++) world.terrain.set(x, 24, Terrain.Road);
     world.terrain.set(24, 23, Terrain.Water);

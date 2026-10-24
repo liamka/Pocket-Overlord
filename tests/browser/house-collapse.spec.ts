@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/collapse-fixture');
 });
 
-test('lethal damage keeps a visible house, collapses in stages, freezes on pause and clears without changing saves', async ({ page }) => {
+test('lethal damage collapses in stages, freezes on pause and leaves saved ruins', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const [{ flatWorld }, { Renderer }, { applyEvent }, { World }] = await Promise.all([
       '/tests/helpers.ts', '/src/render/renderer.ts', '/src/systems/effects.ts', '/src/core/world.ts',
@@ -25,14 +25,17 @@ test('lethal damage keeps a visible house, collapses in stages, freezes on pause
     const unchanged = saved === JSON.stringify(world.snapshot());
     world.paused = false;
     for (let i = 0; i < 180; i++) renderer.draw(world, now += 1000 / 30);
-    const expired = ground === canvas.toDataURL();
+    const settled = canvas.toDataURL(), ruinsRemain = ground !== settled;
+    renderer.draw(new World(world.seed, world.registry, world.snapshot()), now += 16);
+    const restored = canvas.toDataURL() === settled;
+    for (const ruin of world.query('ruin')) world.remove(ruin.id);
     const second = world.spawn('core:house', { x: 24, y: 24 });
     applyEvent(world, { kind: 'damage', target: second.id, amount: 1000 }); renderer.draw(world, now += 16);
     const visibleAgain = canvas.toDataURL() !== ground;
     renderer.draw(new World(world.seed, world.registry, world.snapshot()), now += 16);
-    return { visible: initial !== ground, phases: new Set(frames).size, paused, unchanged, expired, visibleAgain, reset: canvas.toDataURL() === ground, houses: world.houseCount };
+    return { visible: initial !== ground, phases: new Set(frames).size, paused, unchanged, ruinsRemain, restored, visibleAgain, savedRuins: canvas.toDataURL() !== ground, houses: world.houseCount };
   });
-  expect(result).toEqual({ visible: true, phases: 4, paused: true, unchanged: true, expired: true, visibleAgain: true, reset: true, houses: 0 });
+  expect(result).toEqual({ visible: true, phases: 4, paused: true, unchanged: true, ruinsRemain: true, restored: true, visibleAgain: true, savedRuins: true, houses: 0 });
 });
 
 test('fragments preserve all four architectures, village colors and the actual construction stage', async ({ page }) => {

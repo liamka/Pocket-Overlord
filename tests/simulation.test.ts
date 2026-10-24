@@ -275,8 +275,9 @@ describe('property-based effects and tools', () => {
     const far = world.spawn('test:wooden-crate', { x: 40, y: 40 })!;
     world.events.push({ kind: 'blast', x: 20, y: 20, radius: 6, power: 500, heat: 100 });
     processEvents(world);
-    expect([...world.entities.keys()]).toEqual([far.id]);
-    expect(world.nearby({ x: 20, y: 20 }, 6)).toHaveLength(0);
+    expect([...world.entities.values()].filter(e => !e.components.ruin).map(e => e.id)).toEqual([far.id]);
+    const rubble = world.nearby({ x: 20, y: 20 }, 6);
+    expect(rubble).toHaveLength(1); expect(rubble[0].components.ruin).toBeDefined();
     expect(world.population).toBe(0); expect(world.houseCount).toBe(0);
   });
   it('spreads fire to a new registered flammable type and rain suppresses it', () => {
@@ -344,7 +345,7 @@ describe('people and settlements', () => {
     applyEvent(world, { kind: 'impulse', target: human.id, x: 150, y: 0 });
     for (let i = 0; i < 900; i++) { world.step(); const p = human.components.position!; expect(world.terrain.isLand(p.x, p.y)).toBe(true); }
   });
-  it.each(['dynamite', 'rocket', 'fire'])('keeps walking normally near %s without fleeing or abandoning its route', danger => {
+  it.each(['dynamite', 'rocket', 'fire'])('interrupts its route to escape nearby %s', danger => {
     const world = flatWorld();
     const human = world.spawn('core:person', { x: 20, y: 20 })!;
     const home = world.spawn('core:house', { x: 28, y: 20 })!;
@@ -354,11 +355,10 @@ describe('people and settlements', () => {
     const hazard = world.spawn(danger === 'fire' ? 'core:tree' : `core:${danger}`, { x: 23, y: 20 })!;
     if (danger === 'fire') applyEvent(world, { kind: 'heat', target: hazard.id, amount: 100 });
     advance(world, 0.8);
-    expect(human.components.position!.x).toBeCloseTo(20 + human.components.motion!.speed * 0.8);
-    expect(human.components.position!.y).toBeCloseTo(20);
-    expect(human.components.motion!.heading).toBe(0);
-    expect(citizen.task).toBe('visit'); expect(citizen.targetId).toBe(home.id);
-    expect(citizen.path).toEqual([{ x: 28, y: 20 }]);
+    expect(human.components.position!.x).toBeLessThan(20);
+    expect(world.terrain.isLand(human.components.position!.x, human.components.position!.y)).toBe(true);
+    expect(citizen.emergency?.kind).toBe('flee');
+    expect(citizen.task).toBe('idle'); expect(citizen.targetId).toBeNull(); expect(citizen.path).toEqual([]);
   });
   it('builds, shares housing and produces children with a pair and free space', () => {
     const world = flatWorld();
@@ -449,7 +449,9 @@ describe('gradual landscape recovery', () => {
     expect(world.terrain.at(20, 20)).toBe(Terrain.Crater);
     advance(world, 384);
     expect(world.terrain.tiles).toEqual(original);
-    expect(world.entities.size).toBe(0); expect(world.terrain.recovery.size).toBe(0);
+    expect(world.population).toBe(0); expect(world.houseCount).toBe(0);
+    expect([...world.query('ruin')]).toHaveLength(1); expect(world.entities.size).toBe(1);
+    expect(world.terrain.recovery.size).toBe(0);
   });
   it('rain restores the remembered beach surface after its crater has closed', () => {
     const world = flatWorld(); world.terrain.set(20, 20, Terrain.Sand); world.terrain.set(20, 20, Terrain.Crater);

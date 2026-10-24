@@ -11,6 +11,8 @@ import { approachFerry } from './ferries';
 import { reservedBeds } from './migration';
 import { recordResidentMovement } from '../core/resident-animation';
 import { assignConstruction, continueConstruction, startConstruction } from './construction';
+import { emergencyReach, isEmergency } from './emergencies';
+import { rebuildHome } from './recovery';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const endangered = (world: World, p: Vec2): boolean => world.nearby(p, 7).some(e => e.components.explosive || e.components.thermal?.burning);
@@ -49,7 +51,7 @@ export function movement(world: World, dt: number): void {
     const previous = { ...p! };
     if (person) person.age += dt * 0.3;
     m!.decisionIn -= dt;
-    if (person && approachFerry(world, entity, dt)) { recordResidentMovement(entity, previous, dt, aboardFerry(world, entity.id)); continue; }
+    if (person && (!isEmergency(entity) || aboardFerry(world, entity.id)) && approachFerry(world, entity, dt)) { recordResidentMovement(entity, previous, dt, aboardFerry(world, entity.id)); continue; }
     if (person && !world.terrain.isLand(p!.x, p!.y)) { swim(world, entity, dt); recordResidentMovement(entity, previous, dt); continue; }
     let speed = m!.speed * (person && person.age < 18 ? 0.7 : 1);
     if (isRoadSurface(world.terrain.at(p!.x, p!.y))) speed *= 1.4;
@@ -65,7 +67,15 @@ export function movement(world: World, dt: number): void {
       fleeX += (p!.x - op.x || 0.01) / Math.max(0.1, d * d);
       fleeY += (p!.y - op.y || 0.01) / Math.max(0.1, d * d);
     }
-    if (fleeX || fleeY) {
+    const emergency = citizen?.emergency;
+    if (emergency) {
+      while (emergency.path.length && distance(p!, emergency.path[0]) < 0.2) emergency.path.shift();
+      const waypoint = emergency.path[0], target = world.entities.get(emergency.targetId ?? -1)?.components.position;
+      if (emergency.kind === 'flee') speed *= 2;
+      if (waypoint) { m!.heading = Math.atan2(waypoint.y - p!.y, waypoint.x - p!.x); speed = Math.min(speed, distance(p!, waypoint) / dt); }
+      else if (target && distance(p!, target) > emergencyReach(emergency.kind) + 0.15 && distance(p!, target) < 5) m!.heading = Math.atan2(target.y - p!.y, target.x - p!.x);
+      else speed = 0;
+    } else if (fleeX || fleeY) {
       m!.heading = Math.atan2(fleeY, fleeX); speed *= 2.3;
       if (citizen) { citizen.path = []; citizen.reconsiderIn = 0; }
     } else if (citizen && citizen.task !== 'idle') {
@@ -95,10 +105,12 @@ export function movement(world: World, dt: number): void {
       else {
         m!.heading += world.rng.range(0.8, 2.3); m!.decisionIn = 0.2;
         // Yield around another resident instead of indefinitely blocking a shared route.
-        if (citizen && citizen.path.length) {
+        const path = emergency?.path ?? citizen?.path;
+        if (path?.length) {
           const side = { x: p!.x + Math.cos(m!.heading) * 0.5, y: p!.y + Math.sin(m!.heading) * 0.5 };
-          if (world.canStand(side, 0.17, entity.id)) citizen.path.unshift(side);
-          citizen.reconsiderIn = Math.min(citizen.reconsiderIn, 0.5);
+          if (world.canStand(side, 0.17, entity.id)) path.unshift(side);
+          if (emergency) emergency.reconsiderIn = Math.min(emergency.reconsiderIn, 0.5);
+          else citizen!.reconsiderIn = Math.min(citizen!.reconsiderIn, 0.5);
         }
         break;
       }
@@ -134,21 +146,29 @@ export function settlement(world: World): void {
     const person = entity.components.person!, old = residents.get(person.homeId ?? -1);
     if (old) { const index = old.indexOf(entity); if (index >= 0) old.splice(index, 1); }
     person.homeId = house.id; entity.components.citizen!.villageId = assignHouse(world, house).id;
+    delete person.displaced;
     const list = residents.get(house.id) ?? []; list.push(entity); residents.set(house.id, list);
   };
   for (const entity of people) {
     const person = entity.components.person!, citizen = entity.components.citizen!, position = entity.components.position!;
-    if (citizen.task === 'migrate' || aboardFerry(world, entity.id)) continue;
+    if (citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id)) continue;
     if (!world.terrain.isLand(position.x, position.y) || entity.components.thermal?.burning || endangered(world, position)) continue;
     if (person.homeId !== null) {
       const home = world.entities.get(person.homeId)!;
       citizen.villageId = assignHouse(world, home).id;
     }
     if (person.homeId === null) {
+      if (person.displaced) {
+        const restored = rebuildHome(world, entity);
+        if (restored) { moveIn(entity, restored); continue; }
+        // Shelter is assigned by the migration system only after the household walks there.
+        if (person.displaced && world.tick - person.displaced.since < 1800) continue;
+      }
       const home = world.nearby(position, 18).find(e => e.components.dwelling && !e.components.thermal?.burning
         && raceOf(e) === raceOf(entity)
         && !atWar(world, citizen.villageId, e.components.dwelling.villageId)
-        && (residents.get(e.id)?.length ?? 0) + (reserved.get(e.id) ?? 0) < e.components.dwelling.capacity);
+        && (residents.get(e.id)?.length ?? 0) + (reserved.get(e.id) ?? 0) < e.components.dwelling.capacity
+        && (!person.displaced || distance(position, e.components.position!) < 3.2));
       if (home) moveIn(entity, home);
       else if (person.age >= 18 && person.buildIn <= 0) {
         const site = findSite(world, position, 6, 12, 1.3), house = site && startConstruction(world, site, entity);
@@ -159,7 +179,7 @@ export function settlement(world: World): void {
   }
   for (const entity of people) {
     const person = entity.components.person!, citizen = entity.components.citizen!, village = villageOf(world, citizen.villageId);
-    if (citizen.task === 'migrate' || aboardFerry(world, entity.id) || person.age < 18 || !village || person.homeId === null || entity.components.thermal?.burning
+    if (citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id) || person.age < 18 || !village || person.homeId === null || entity.components.thermal?.burning
       || !world.terrain.isLand(entity.components.position!.x, entity.components.position!.y)) continue;
     if (citizen.partnerId === null) {
       const partner = people.find(other => {
@@ -228,7 +248,7 @@ export function intentions(world: World): void {
     c.attackIn = Math.max(0, c.attackIn - 0.5); c.reconsiderIn -= 0.5;
     if (c.hunger >= 90) world.events.push({ kind: 'damage', target: entity.id, amount: 0.75 });
     if (person.age >= stats.lifespan) { world.events.push({ kind: 'damage', target: entity.id, amount: entity.components.health!.current }); continue; }
-    if (c.task === 'migrate' || aboardFerry(world, entity.id) || waitingForFerry(world, entity)) continue;
+    if (isEmergency(entity) || c.task === 'migrate' || aboardFerry(world, entity.id) || waitingForFerry(world, entity)) continue;
     if (continueConstruction(world, entity)) continue;
     if (continueRepair(world, entity, repairs)) continue;
     if (!world.terrain.isLand(position.x, position.y)) continue;

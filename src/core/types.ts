@@ -5,6 +5,7 @@ export interface WorldViewport { left: number; top: number; right: number; botto
 export interface ToolControl { x: number; y: number; attacking: boolean; active: boolean }
 export interface ResidentAnimation { stride: number; moving: number; heading: number; work: number }
 export interface Construction { progress: number; struckAt: number }
+export interface Emergency { kind: 'flee' | 'extinguish' | 'aid'; targetId: number | null; path: Vec2[]; reconsiderIn: number }
 
 export interface CoreComponents {
   position: Vec2;
@@ -12,9 +13,10 @@ export interface CoreComponents {
   combustible: { fuel: number; ignition: number };
   thermal: { temperature: number; wetness: number; burning: boolean };
   motion: { vx: number; vy: number; speed: number; heading: number; decisionIn: number };
-  person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation };
-  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'fight' | 'repair' | 'build' | 'migrate'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null };
+  person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation; displaced?: { homeId: number; since: number } };
+  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'fight' | 'repair' | 'build' | 'migrate'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency };
   dwelling: { race?: RaceId; capacity: number; villageId: number | null; construction?: Construction };
+  ruin: { race: RaceId; villageId: number | null; homeId: number; capacity: number; destroyedAt: number };
   farm: { villageId: number; growth: number; harvests: number };
   caravan: { fromId: number; toId: number | null; food: number; path: Vec2[]; next: number; returning: boolean; retryIn: number };
   solid: { radius: number };
@@ -110,4 +112,4 @@ export const POPULATION_LIMIT = 300;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;
-export const SAVE_VERSION = 28;
+export const SAVE_VERSION = 29;

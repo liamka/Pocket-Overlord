@@ -34,6 +34,10 @@ export const coreContent: ContentPack = {
     .registerEntity({ id: 'core:farm', sprite: 'farm', create: p => ({
       ...burnable(p, 55, 35, 30), farm: { villageId: 0, growth: 0, harvests: 0 },
     }) })
+    .registerEntity({ id: 'core:ruin', sprite: 'house', create: p => ({
+      position: { ...p }, appearance: { variant: 0 },
+      ruin: { race: 'human', villageId: null, homeId: 1, capacity: 5, destroyedAt: 0 },
+    }) })
     .registerEntity({ id: 'core:caravan', sprite: 'caravan', create: p => ({
       ...burnable(p, 100, 40, 35),
       caravan: { fromId: 0, toId: null, food: 0, path: [], next: 0, returning: false, retryIn: 0 },
