@@ -2,6 +2,23 @@ import type { Entity } from '../core/types';
 import { raceOf } from '../core/races';
 import { drawSprite } from './sprites';
 
+export function drawStoneHouse(ctx: CanvasRenderingContext2D, entity: Entity, time: number, color?: string): void {
+  drawSprite(ctx, 'house', entity.components.appearance?.variant, time, false, 0, color, raceOf(entity));
+  // Masonry keeps the original roof and each people's silhouette visible.
+  ctx.fillStyle = '#4f5c5b'; ctx.fillRect(-9, -10, 19, 14);
+  for (let row = 0; row < 4; row++) for (let col = 0; col < 5; col++) {
+    const x = -9 + col * 4 + row % 2 * 2;
+    ctx.fillStyle = (col + row) % 3 ? '#a2ada6' : '#bec5b7';
+    if (x < 9) ctx.fillRect(x, -10 + row * 3, Math.min(3, 9 - x), 2);
+  }
+  ctx.fillStyle = '#3b443d'; ctx.fillRect(-2, -5, 5, 9);
+  ctx.fillStyle = '#a88151'; ctx.fillRect(-1, -4, 3, 8);
+  ctx.fillStyle = '#d9c597'; ctx.fillRect(1, 0, 1, 1);
+  ctx.fillStyle = '#475e63'; ctx.fillRect(-7, -7, 3, 4); ctx.fillRect(5, -7, 3, 4);
+  ctx.fillStyle = '#b7d8d5'; ctx.fillRect(-7, -7, 2, 2); ctx.fillRect(5, -7, 2, 2);
+  ctx.fillStyle = '#d4d8c9'; ctx.fillRect(-10, 3, 21, 2);
+}
+
 export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, tick: number, color?: string): void {
   const site = entity.components.dwelling!.construction!, progress = site.progress;
   const rect = (color: string, x: number, y: number, w: number, h: number): void => {
@@ -11,6 +28,15 @@ export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, 
     const length = Math.ceil(Math.hypot(toX - x, toY - y));
     for (let i = 0; i <= length; i++) rect('#b68c51', x + (toX - x) * i / length, y + (toY - y) * i / length, 2, 2);
   };
+  if (site.upgrade) {
+    drawSprite(ctx, 'house', entity.components.appearance?.variant, tick / 30, false, 0, color, raceOf(entity));
+    ctx.save(); ctx.beginPath(); ctx.rect(-14, 5 - progress * 18, 28, progress * 18); ctx.clip();
+    drawStoneHouse(ctx, entity, tick / 30, color); ctx.restore();
+    for (const x of [-14, 13]) { rect('#735637', x, -17, 2, 23); rect('#bc9b63', x, -17, 1, 22); }
+    rect('#bc9b63', -15, -6, 30, 2);
+    for (let i = 0; i < 3; i++) rect(i % 2 ? '#b9c2b9' : '#7f8d87', -18 + i % 2 * 4, 5 - i * 3, 5, 3);
+    return;
+  }
   rect('#394b3444', -12, -1, 26, 8);
   // The foundation, wall frame and roof timbers appear as separate construction stages.
   for (let n = 0; n < 7; n++) {

@@ -5,8 +5,10 @@ export interface Vec2 { x: number; y: number }
 export interface WorldViewport { left: number; top: number; right: number; bottom: number }
 export interface ToolControl { x: number; y: number; attacking: boolean; active: boolean }
 export interface ResidentAnimation { stride: number; moving: number; heading: number; work: number }
-export interface Construction { progress: number; struckAt: number }
+export interface Construction { progress: number; struckAt: number; upgrade?: boolean }
 export interface Emergency { kind: 'flee' | 'extinguish' | 'aid'; targetId: number | null; path: Vec2[]; reconsiderIn: number }
+export interface Plague { age: number; spreadIn: number }
+export interface Madness { age: number }
 
 export interface CoreComponents {
   position: Vec2;
@@ -14,9 +16,9 @@ export interface CoreComponents {
   combustible: { fuel: number; ignition: number };
   thermal: { temperature: number; wetness: number; burning: boolean };
   motion: { vx: number; vy: number; speed: number; heading: number; decisionIn: number };
-  person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation; displaced?: { homeId: number; since: number } };
-  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'socialize' | 'fight' | 'repair' | 'build' | 'migrate' | 'work' | 'deliver' | 'tend' | 'guard'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency; work?: ResidentWork; service?: number; integration?: Integration };
-  dwelling: { race?: RaceId; capacity: number; villageId: number | null; construction?: Construction };
+  person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation; displaced?: { homeId: number; since: number }; plague?: Plague; madness?: Madness };
+  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'socialize' | 'fight' | 'repair' | 'build' | 'migrate' | 'work' | 'deliver' | 'tend' | 'guard' | 'equip'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency; work?: ResidentWork; weapon?: 'stone-axe'; service?: number; integration?: Integration };
+  dwelling: { race?: RaceId; level?: 2; capacity: number; villageId: number | null; construction?: Construction };
   ruin: { race: RaceId; villageId: number | null; homeId: number; capacity: number; destroyedAt: number };
   farm: { villageId: number; growth: number; harvests: number; grain?: number };
   caravan: { fromId: number; toId: number | null; food: number; path: Vec2[]; next: number; returning: boolean; retryIn: number };
@@ -116,4 +118,4 @@ export const POPULATION_LIMIT = 300;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;
-export const SAVE_VERSION = 31;
+export const SAVE_VERSION = 32;

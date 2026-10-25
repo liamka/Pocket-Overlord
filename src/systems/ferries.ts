@@ -1,4 +1,5 @@
 import type { World } from '../core/world';
+import { liftedIds } from '../core/cataclysms';
 import { FERRY_CAPACITY, type Entity } from '../core/types';
 import { aboardFerry, ferryAvailable, ferryLink, ferryPosition, ferryRoutes, nextWaypoint, tilePoint } from '../core/ferries';
 
@@ -21,6 +22,7 @@ export function approachFerry(world: World, entity: Entity, dt: number): boolean
 
 /** Boats shuttle on demand, including an empty return to collect travelers on the other bank. */
 export function ferries(world: World, dt: number): void {
+  const lifted = liftedIds(world);
   for (const { road, ferry } of ferryRoutes(world)) {
     ferry.passengers = ferry.passengers.filter(id => world.entities.has(id));
     if (!ferryAvailable(world, road, ferry)) {
@@ -56,7 +58,7 @@ export function ferries(world: World, dt: number): void {
     }
     const waiting: [Entity[], Entity[]] = [[], []];
     for (const e of world.query('position')) {
-      if (!e.components.citizen && !e.components.caravan || aboardFerry(world, e.id)) continue;
+      if (!e.components.citizen && !e.components.caravan || lifted.has(e.id) || aboardFerry(world, e.id)) continue;
       const next = nextWaypoint(e), p = e.components.position!;
       const link = next && ferryLink(world, p, next);
       if (!link || link.ferry !== ferry) continue;

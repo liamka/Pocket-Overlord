@@ -3,7 +3,7 @@ import { englishMessages, languages, LANGUAGE_KEY, loadLanguage, messages, saveL
 
 afterEach(() => vi.unstubAllGlobals());
 
-const values = { id: 'ABCD', day: 7, year: 2, count: 3, food: 15, error: 'Example error', a: 'Alpha', b: 'Beta', target: 'Target', village: 'New Eden', side: 'Alpha, Beta', reason: 'Reason', donor: 'Alpha', receiver: 'Beta', name: 'Rowan', trust: 65, sheep: 4, dogs: 2, grain: 8, flour: 2, bread: 4, wood: 6, tools: 3, settling: 2, settled: 3, isolated: 1, friend: 'Cora' };
+const values = { id: 'ABCD', day: 7, year: 2, count: 3, food: 15, error: 'Example error', a: 'Alpha', b: 'Beta', target: 'Target', village: 'New Eden', side: 'Alpha, Beta', reason: 'Reason', donor: 'Alpha', receiver: 'Beta', name: 'Rowan', trust: 65, sheep: 4, dogs: 2, grain: 8, flour: 2, bread: 4, wood: 6, tools: 3, settling: 2, settled: 3, isolated: 1, friend: 'Cora', stone: 8, axes: 2, homes: 1, armed: 3 };
 const tokens = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort();
 
 describe('interface languages', () => {

@@ -4,7 +4,7 @@ import { setUfoViewport } from './content/ufos';
 import { setDragonViewport } from './content/dragons';
 import { FixedClock } from './core/clock';
 import { World } from './core/world';
-import { SIMULATION_SPEEDS, type GameCommand, type SimulationSpeed } from './core/types';
+import { SIMULATION_SPEEDS, type GameCommand, type SimulationSpeed, type WorldSnapshot } from './core/types';
 import { InputController } from './input/controller';
 import { IndexedDBBackend, SaveService } from './persistence/storage';
 import { Renderer } from './render/renderer';
@@ -25,11 +25,30 @@ const clock = new FixedClock();
 const saves = new SaveService(new IndexedDBBackend(), registry);
 const seed = (): number => crypto.getRandomValues(new Uint32Array(1))[0];
 let world: World;
+// Store compact UTF-8 checkpoints without a fixed action limit. Discard the
+// oldest entries when the history exceeds its budget, keeping at least one.
+const undoHistory: Uint8Array[] = [];
+const undoBudget = 128 * 1024 * 1024;
+const undoEncoder = new TextEncoder(), undoDecoder = new TextDecoder();
+let undoBytes = 0;
+let actionRecorded = false;
 const updateUI = (): void => { if (world) ui.update(world, renderer.camera.zoom); };
 const modalOpen = (): boolean => ui.dialog.open || ui.settingsDialog.open;
 const togglePause = (): void => { world.command({ kind: 'pause', paused: !world.paused }); clock.reset(); updateUI(); };
 const dispatch = (command: GameCommand): void => {
+  // Keep one checkpoint for the entire click, brush stroke or held power.
+  const before = command.kind === 'use-tool' && !actionRecorded
+    && world.terrain.inside(command.x, command.y)
+    && registry.tools.get(command.toolId)?.canApply?.(world, command) !== false
+    ? world.snapshot() : undefined;
   const message = world.command(command);
+  const checkpoint = before && JSON.stringify(before);
+  if (checkpoint && checkpoint !== JSON.stringify(world.snapshot())) {
+    const entry = undoEncoder.encode(checkpoint);
+    undoHistory.push(entry); undoBytes += entry.byteLength;
+    while (undoBytes > undoBudget && undoHistory.length > 1) undoBytes -= undoHistory.shift()!.byteLength;
+    actionRecorded = true; ui.undo.disabled = false;
+  }
   if (command.kind === 'speed' || command.kind === 'pause') clock.reset();
   if (message) ui.toast(message);
   updateUI();
@@ -39,12 +58,29 @@ const input = new InputController(renderer, {
   select: id => { selected = registry.tools.get(id)!; renderer.tool = selected; ui.select(selected); },
   tools: () => registry.tools.values(),
   dispatch,
+  beginAction: () => { actionRecorded = false; },
   togglePause,
   dimensions: () => ({ x: world.terrain.width, y: world.terrain.height }),
   blocked: () => !ready || modalOpen(),
   cameraChanged: updateUI,
 });
 input.bindTouchControls(ui.touchControls);
+ui.undo.addEventListener('click', () => {
+  const entry = undoHistory.at(-1);
+  if (!ready || modalOpen() || !entry) return;
+  input.reset();
+  const { paused, speed } = world;
+  const undoSnapshot = JSON.parse(undoDecoder.decode(entry)) as WorldSnapshot;
+  world = new World(undoSnapshot.seed, registry, undoSnapshot);
+  world.paused = paused; world.speed = speed;
+  for (const tool of registry.tools.values()) tool.release?.(world);
+  undoHistory.pop(); undoBytes -= entry.byteLength;
+  actionRecorded = false; ui.undo.disabled = undoHistory.length === 0;
+  clock.reset(); updateUI();
+  renderer.draw(world, performance.now(), ui.currentLanguage);
+  ui.toast('Последнее действие отменено');
+  void autoSave();
+});
 for (const button of ui.speedButtons) button.addEventListener('click', () => {
   dispatch({ kind: 'speed', speed: Number(button.dataset.speed) as SimulationSpeed });
   ui.closeSpeedMenu(true);
@@ -81,7 +117,10 @@ async function createWorld(): Promise<void> {
   ready = false; clock.reset();
   ui.setLoading('Creating world…');
   await paintLoading();
-  try { world = new World(ui.newWorldSeed, registry, undefined, undefined, ui.newWorldBiome, ui.newWorldNature); }
+  try {
+    world = new World(ui.newWorldSeed, registry, undefined, undefined, ui.newWorldBiome, ui.newWorldNature);
+    undoHistory.length = 0; undoBytes = 0; actionRecorded = false; ui.undo.disabled = true;
+  }
   catch {
     ready = true; clock.reset(); ui.setLoading(null);
     ui.toast('Could not create the world. Try again.');

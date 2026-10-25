@@ -3,6 +3,7 @@ import { isRoadSurface, type Entity, type Village } from '../core/types';
 import { economyOf, recordService, type Good, type WorkplaceKind } from '../core/village-life';
 import { findPath } from './navigation';
 import { villageOf } from './society';
+import { STONE } from '../core/stone';
 
 const distance = (a: Entity, b: Entity): number => Math.hypot(a.components.position!.x - b.components.position!.x, a.components.position!.y - b.components.position!.y);
 export function marketOf(world: World, villageId: number): Entity | undefined {
@@ -16,7 +17,7 @@ export function economy(world: World): void {
     const e = economyOf(village);
     e.stocks.bread = Math.min(e.stocks.bread, village.food);
     if (world.tick < e.buildAfter) continue;
-    const adults = [...world.query('person', 'citizen', 'position')].filter(p => p.components.person!.age >= 18
+    const adults = [...world.query('person', 'citizen', 'position')].filter(p => p.components.person!.age >= 18 && !p.components.person!.madness
       && p.components.citizen!.villageId === village.id && p.components.citizen!.task !== 'migrate' && !p.components.thermal?.burning);
     if (adults.length < 3) continue;
     e.buildAfter = world.tick + 450;
@@ -41,11 +42,49 @@ export function economy(world: World): void {
   }
 }
 
-const recipes: Record<'flour' | 'bread' | 'tools', { station: WorkplaceKind; input: Good; needed: number; output: number }> = {
-  flour: { station: 'mill', input: 'grain', needed: 2, output: 2 },
-  bread: { station: 'bakery', input: 'flour', needed: 2, output: 4 },
-  tools: { station: 'workshop', input: 'wood', needed: 3, output: 2 },
-};
+const recipes = {
+  flour: { station: 'mill', inputs: { grain: 2 }, output: 2 },
+  bread: { station: 'bakery', inputs: { flour: 2 }, output: 4 },
+  tools: { station: 'workshop', inputs: { wood: 3 }, output: 2 },
+  stoneAxes: { station: 'workshop', inputs: { stone: STONE.axeCost, wood: STONE.axeWood }, output: 1 },
+} satisfies Record<string, { station: WorkplaceKind; inputs: Partial<Record<Good, number>>; output: number }>;
+type CraftedGood = keyof typeof recipes;
+const inputsOf = (good: CraftedGood): [Good, number][] => Object.entries(recipes[good].inputs) as [Good, number][];
+const affordable = (stocks: Record<Good, number>, good: CraftedGood): boolean => inputsOf(good).every(([input, amount]) => stocks[input] >= amount);
+
+/** A weapon leaves the village stock only when its new owner reaches the market. */
+export function continueEquipping(world: World, entity: Entity): boolean {
+  const c = entity.components.citizen!;
+  if (c.task !== 'equip') return false;
+  const village = villageOf(world, c.villageId), market = world.entities.get(c.targetId ?? -1);
+  if (!village || !market || market.components.workplace?.kind !== 'market' || market.components.workplace.villageId !== village.id
+    || market.components.thermal?.burning || c.hunger >= 70 || c.weapon || entity.components.person!.age < 18 || economyOf(village).stocks.stoneAxes < 1) {
+    stop(entity); return false;
+  }
+  if (!c.path.length && distance(entity, market) <= 2.1) {
+    economyOf(village).stocks.stoneAxes--; c.weapon = 'stone-axe'; stop(entity); return false;
+  }
+  if (c.reconsiderIn <= 0 || !c.path.length) {
+    const path = findPath(world, entity.components.position!, market.components.position!, 1.8);
+    if (path === undefined) { stop(entity); return false; }
+    c.path = path; c.reconsiderIn = 2;
+  }
+  return true;
+}
+
+export function assignEquipment(world: World, entity: Entity): boolean {
+  const c = entity.components.citizen!, village = villageOf(world, c.villageId);
+  if (!village || c.weapon || c.work?.cargo || c.hunger >= 55 || entity.components.person!.age < 18) return false;
+  const stock = economyOf(village).stocks.stoneAxes;
+  if (stock < 1) return false;
+  const market = marketOf(world, village.id);
+  const reserved = [...world.query('citizen')].filter(e => e.id !== entity.id && e.components.citizen!.task === 'equip' && e.components.citizen!.villageId === village.id).length;
+  if (!market || stock <= reserved) return false;
+  const path = findPath(world, entity.components.position!, market.components.position!, 1.8);
+  if (path === undefined) return false;
+  Object.assign(c, { task: 'equip', targetId: market.id, path, repair: null, reconsiderIn: 2 });
+  return true;
+}
 
 function stop(entity: Entity): void {
   const c = entity.components.citizen!;
@@ -94,7 +133,8 @@ export function continueVillageWork(world: World, entity: Entity): boolean {
   const good = work.good;
   if (good === 'wood' ? target.typeId !== 'core:tree'
     : good === 'grain' ? target.components.farm?.villageId !== village.id || (target.components.farm.grain ?? 0) < 1
-    : target.components.workplace?.kind !== recipes[good].station || target.components.workplace.villageId !== village.id || stocks[recipes[good].input] < recipes[good].needed) {
+    : good === 'stone' ? !target.components.stone || !world.terrain.isLand(target.components.position!.x, target.components.position!.y)
+    : target.components.workplace?.kind !== recipes[good].station || target.components.workplace.villageId !== village.id || !affordable(stocks, good)) {
     stop(entity); return false;
   }
   work.progress = Math.min(4, work.progress + 0.5);
@@ -103,7 +143,14 @@ export function continueVillageWork(world: World, entity: Entity): boolean {
   let amount: number;
   if (good === 'wood') { amount = 3; world.remove(target.id); }
   else if (good === 'grain') { amount = Math.min(6, target.components.farm!.grain!); target.components.farm!.grain! -= amount; }
-  else { const recipe = recipes[good]; stocks[recipe.input] -= recipe.needed; amount = recipe.output; }
+  else if (good === 'stone') {
+    amount = Math.min(STONE.batch, target.components.stone!.remaining);
+    target.components.stone!.remaining -= amount;
+    if (target.components.stone!.remaining === 0) world.remove(target.id);
+  } else {
+    for (const [input, needed] of inputsOf(good)) stocks[input] -= needed;
+    amount = recipes[good].output;
+  }
   work.cargo = { good, amount, villageId: village.id }; work.progress = 0;
   if (!sendToMarket(world, entity, village)) stop(entity);
   return true;
@@ -121,18 +168,35 @@ export function assignVillageWork(world: World, entity: Entity): boolean {
   const stocks = economyOf(village).stocks;
   const buildings = [...world.query('workplace', 'position')].filter(e => e.components.workplace!.villageId === village.id && !e.components.thermal?.burning);
   const jobs: { good: Good; target: Entity }[] = [];
-  const addRecipe = (good: 'flour' | 'bread' | 'tools', limit: number): void => {
+  const addRecipe = (good: CraftedGood, limit: number): void => {
     const recipe = recipes[good];
-    if (stocks[recipe.input] < recipe.needed || stocks[good] >= limit) return;
+    if (!affordable(stocks, good) || stocks[good] >= limit) return;
     for (const target of buildings) if (target.components.workplace!.kind === recipe.station) jobs.push({ good, target });
   };
   addRecipe('bread', 30); addRecipe('flour', 12);
   for (const target of world.query('farm', 'position')) if (target.components.farm!.villageId === village.id && (target.components.farm!.grain ?? 0) >= 1 && stocks.grain < 24) jobs.push({ good: 'grain', target });
   addRecipe('tools', 8);
+  const upgrading = [...world.query('dwelling')].some(e => e.components.dwelling!.villageId === village.id && !e.components.dwelling!.level && !e.components.dwelling!.construction);
+  if (!upgrading || stocks.stone >= STONE.houseCost + STONE.axeCost) addRecipe('stoneAxes', Math.min(4, residents.filter(e => !e.components.citizen!.weapon).length));
   if (stocks.wood < 12) {
     const trees = world.nearby(market.components.position!, 18).filter(e => e.typeId === 'core:tree' && !e.components.thermal?.burning);
     trees.sort((a, b) => distance(entity, a) - distance(entity, b));
     for (const target of trees) jobs.push({ good: 'wood', target });
+  }
+  if (stocks.stone < 24) {
+    const deposits = world.nearby(market.components.position!, 28).filter(e => e.components.stone && world.terrain.isLand(e.components.position!.x, e.components.position!.y));
+    deposits.sort((a, b) => distance(entity, a) - distance(entity, b));
+    for (const target of deposits) jobs.push({ good: 'stone', target });
+  }
+  // A well-fed village can devote one worker to stone development while the others
+  // keep producing food. Otherwise bread recipes can indefinitely starve mining.
+  const stoneWork = jobs.some(job => job.good === 'stone' || job.good === 'stoneAxes');
+  if (stoneWork && village.food >= residents.length * 2
+    && !workers.some(e => ['wood', 'stone', 'stoneAxes'].includes(e.components.citizen!.work?.good ?? ''))) {
+    const priority = (good: Good): number => good === 'stoneAxes' ? 0
+      : good === 'wood' && stocks.wood < (upgrading ? STONE.houseWood : STONE.axeWood) ? 1
+      : good === 'stone' ? 2 : 3;
+    jobs.sort((a, b) => priority(a.good) - priority(b.good));
   }
   for (const { good, target } of jobs) {
     if (workers.some(e => e.components.citizen!.targetId === target.id)) continue;

@@ -1,6 +1,7 @@
 import type { World } from '../core/world';
 import { Terrain, type Entity, type Vec2 } from '../core/types';
 import { recordService } from '../core/village-life';
+import { weaponBonus } from '../core/stone';
 import { seasonAt } from '../core/seasons';
 import { findPath } from './navigation';
 import { atWar, villageOf } from './society';
@@ -27,7 +28,7 @@ function establishHerds(world: World): void {
   if (world.tick % 150 !== 0) return;
   for (const village of world.society.villages) {
     const residents = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === village.id
-      && e.components.person!.age >= 18 && e.components.person!.homeId !== null && e.components.citizen!.task !== 'migrate');
+      && e.components.person!.age >= 18 && !e.components.person!.madness && e.components.person!.homeId !== null && e.components.citizen!.task !== 'migrate');
     if (residents.length < 3 || world.tick < village.founded + 600) continue;
     const state = village.livestock ??= { established: false, threatAfter: world.tick + 3600 };
     if (!state.established && village.food >= 8) {
@@ -171,7 +172,7 @@ export function continueAnimalCare(world: World, entity: Entity): boolean {
     if (c.task === 'tend') {
       village.food--; a.hunger = Math.max(0, a.hunger - 55); recordService(entity, 0.5);
       c.task = 'idle'; c.targetId = null; c.path = []; c.reconsiderIn = 0;
-    } else if (c.attackIn <= 0) { world.events.push({ kind: 'damage', target: target!.id, amount: 10 }); c.attackIn = 1; recordService(entity, 0.1); }
+    } else if (c.attackIn <= 0) { world.events.push({ kind: 'damage', target: target!.id, amount: 10 + weaponBonus(entity) }); c.attackIn = 1; recordService(entity, 0.1); }
   } else if (c.reconsiderIn <= 0 || !c.path.length) {
     const route = findPath(world, entity.components.position!, target!.components.position!, c.task === 'guard' ? 1 : 1.6);
     if (!route) { c.task = 'idle'; c.targetId = null; c.path = []; c.reconsiderIn = 0; return false; }

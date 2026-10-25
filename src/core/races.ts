@@ -4,7 +4,7 @@ export const RACE_IDS = ['human', 'elf', 'orc', 'dwarf'] as const;
 export type RaceId = typeof RACE_IDS[number];
 export const isRace = (value: unknown): value is RaceId => RACE_IDS.some(id => id === value);
 
-/** Relative to the existing human simulation; these are Pocket World's balance values. */
+/** Relative to the existing human simulation; these are Pocket Overlord's balance values. */
 export const RACES = {
   human: { entityId: 'core:person', label: 'Human', health: 70, speed: 1.7, lifespan: 85, damage: 12, attackInterval: 1.2, recovery: 0.25, construction: 1, houseHealth: 180 },
   elf: { entityId: 'core:elf', label: 'Elf', health: 60, speed: 2.05, lifespan: 150, damage: 10, attackInterval: 1, recovery: 0.25, construction: 1, houseHealth: 150 },

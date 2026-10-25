@@ -13,6 +13,10 @@ import { registerPeoples } from './peoples';
 import { registerThunderstorms } from './thunderstorms';
 import { registerSeafaring } from './seafaring';
 import { registerVillageLife } from './village-life';
+import { registerStone } from './stone';
+import { registerCataclysms } from './cataclysms';
+import { registerAfflictions } from './afflictions';
+import { registerGeohazards } from './geohazards';
 import { type ComponentKey, type Components, type Vec2 } from '../core/types';
 
 function burnable(position: Vec2, health: number, fuel: number, ignition: number): Components {
@@ -57,6 +61,7 @@ export const coreContent: ContentPack = {
     registerThunderstorms(registry);
     registerSeafaring(registry);
     registerVillageLife(registry);
+    registerStone(registry);
     registerDragons(registry);
     registerUfos(registry);
     registerKaiju(registry);
@@ -64,6 +69,9 @@ export const coreContent: ContentPack = {
     registerNaturalBiomes(registry);
     registerNapalm(registry);
     registerSuperweapons(registry);
+    registerCataclysms(registry);
+    registerAfflictions(registry);
+    registerGeohazards(registry);
   },
 };
 

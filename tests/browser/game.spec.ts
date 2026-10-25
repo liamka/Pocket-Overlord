@@ -10,6 +10,142 @@ import { languages } from '../../src/i18n';
 import { createRegistry } from '../../src/content/defaults';
 import { STORM } from '../../src/content/thunderstorms';
 
+test.describe('undo', () => {
+  test.beforeEach(async ({ page }) => { await page.routeWebSocket('**', socket => socket.close()); });
+  const saveNow = async (page: Page): Promise<void> => {
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  };
+
+  test('restores one placement at a time, ignores navigation and invalid actions, and persists the result after reload', async ({ page }) => {
+    await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
+    const undo = page.getByRole('button', { name: 'Отменить последнее действие', exact: true });
+    await expect(undo).toBeDisabled();
+    await page.mouse.click(1150, 200);
+    await expect(undo).toBeDisabled();
+    const first = point(20, 20), second = point(28, 20);
+    await page.mouse.click(first.x, first.y);
+    await saveNow(page);
+    await expect.poll(async () => (await readSave(page))?.entities.length).toBe(1);
+    const before = (await readSave(page))!;
+    await page.mouse.click(second.x, second.y);
+    await expect(page.locator('#population')).toHaveText('2');
+    await page.mouse.click(1150, 200);
+    await page.mouse.move(700, 250); await page.mouse.down({ button: 'right' });
+    await page.mouse.move(740, 270, { steps: 4 }); await page.mouse.up({ button: 'right' });
+    await page.mouse.wheel(0, -100);
+    const zoom = await page.locator('#zoom-value').textContent();
+    await undo.click();
+    await expect(page.locator('#population')).toHaveText('1');
+    await expect(undo).toBeEnabled();
+    await expect(page.locator('#zoom-value')).toHaveText(zoom!);
+    await expect.poll(() => readSave(page)).toEqual(before);
+    await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect(page.locator('#population')).toHaveText('1');
+    await expect(undo).toBeDisabled();
+    expect(await readSave(page)).toEqual(before);
+  });
+
+  test('undoes many actions in order and retains older history after a new action', async ({ page }) => {
+    await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect(page.locator('#save-status')).toBeHidden();
+    const before = (await readSave(page))!;
+    const undo = page.locator('#undo');
+    for (let i = 0; i < 32; i++) {
+      const target = point(14 + i % 8 * 3, 14 + Math.floor(i / 8) * 3);
+      await page.mouse.click(target.x, target.y);
+    }
+    await expect(page.locator('#population')).toHaveText('32');
+    for (let remaining = 31; remaining >= 27; remaining--) {
+      await undo.click();
+      await expect(page.locator('#population')).toHaveText(String(remaining));
+    }
+    const target = point(36, 28); await page.mouse.click(target.x, target.y);
+    await expect(page.locator('#population')).toHaveText('28');
+    for (let remaining = 27; remaining >= 0; remaining--) {
+      await expect(undo).toBeEnabled();
+      await undo.click();
+      await expect(page.locator('#population')).toHaveText(String(remaining));
+    }
+    await expect(undo).toBeDisabled();
+    await expect.poll(() => readSave(page)).toEqual(before);
+  });
+
+  test('restores an entire brush stroke and keeps it available after a no-op stroke', async ({ page }) => {
+    await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect(page.locator('#save-status')).toBeHidden();
+    const before = (await readSave(page))!;
+    await page.locator('[data-category="biomes"]').click();
+    await page.locator('[data-tool="core:raise-land"]').click();
+    const start = point(16, 24), end = point(32, 24);
+    await page.mouse.click(start.x, start.y);
+    await expect(page.locator('#undo')).toBeDisabled();
+    await page.locator('[data-tool="core:lower-land"]').click();
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 16 }); await page.mouse.up();
+    await saveNow(page);
+    await expect.poll(async () => (await readSave(page))?.terrain.tiles[24 * 48 + 32]).toBe(Terrain.Water);
+    const painted = (await readSave(page))!;
+    for (let x = 16; x <= 32; x++) expect(painted.terrain.tiles[24 * 48 + x]).toBe(Terrain.Water);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 16 }); await page.mouse.up();
+    await page.locator('#undo').click();
+    await expect.poll(() => readSave(page)).toEqual(before);
+    await expect(page.locator('#undo')).toBeDisabled();
+  });
+
+  test('restores destroyed terrain and entities after an explosion while keeping current playback settings', async ({ page }) => {
+    const world = flatWorld(); world.paused = true;
+    world.spawn('core:house', { x: 24, y: 24 });
+    await seed(page, world.snapshot()); await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect(page.locator('#save-status')).toBeHidden();
+    const before = (await readSave(page))!;
+    await page.locator('[data-category="destruction"]').click();
+    await page.locator('[data-tool="core:dynamite"]').click();
+    const target = point(24, 24); await page.mouse.click(target.x, target.y);
+    await page.keyboard.press('4');
+    await expect.poll(async () => (await readSave(page))?.terrain.tiles.includes(Terrain.Crater)).toBe(true);
+    await page.keyboard.press('1');
+    await page.locator('#undo').click();
+    await expect.poll(() => readSave(page)).toEqual({ ...before, paused: true, speed: 4 });
+    await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#speed-value')).toHaveText('4×');
+  });
+
+  test('aligns the tall undo button with the desktop panel, shows its hint and clears when a new world is created', async ({ page }) => {
+    await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
+    const undo = page.locator('#undo'), tooltip = page.locator('#undo-tooltip');
+    await undo.hover();
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toHaveText('Отменить последнее действие');
+    await page.keyboard.press('Escape'); await expect(tooltip).toBeHidden();
+    await page.mouse.move(700, 200);
+    const target = point(24, 24); await page.mouse.click(target.x, target.y);
+    await expect(undo).toBeEnabled();
+    await undo.focus(); await expect(tooltip).toBeVisible();
+    await page.locator('#settings').focus(); await expect(tooltip).toBeHidden();
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport);
+      const button = (await undo.boundingBox())!, panel = (await page.locator('.panel-content').boundingBox())!;
+      const settings = (await page.locator('#settings').boundingBox())!;
+      expect(button.x).toBeGreaterThanOrEqual(0); expect(button.x).toBeLessThan(24);
+      expect(button.y).toBeGreaterThanOrEqual(0);
+      if (viewport.width > 1100) {
+        expect(button.y + button.height / 2).toBeCloseTo(panel.y + panel.height / 2, 1);
+        expect(button.y + button.height / 2).toBeCloseTo(settings.y + settings.height / 2, 1);
+      } else expect(viewport.height - button.y - button.height).toBe(24);
+      expect(button.x + button.width).toBeLessThan(panel.x);
+      expect(button.height).toBeGreaterThan(settings.height * 2);
+      expect(button.height).toBeLessThanOrEqual(settings.height * 2 + 12);
+      expect(button.width).toBeGreaterThanOrEqual(44);
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.locator('#settings').click(); await page.locator('#new-world').click();
+    await page.locator('#confirm-new').click();
+    await expect(page.locator('#loading-screen')).toBeHidden();
+    await expect(page.locator('#undo')).toBeDisabled();
+  });
+});
+
 // Existing scenarios explicitly select Russian; fresh-install defaults are tested separately.
 test.use({ storageState: { cookies: [], origins: [
   { origin: 'http://127.0.0.1:5173', localStorage: [{ name: LANGUAGE_KEY, value: 'ru' }] },
@@ -587,7 +723,7 @@ test('thunderstorm replaces rain, draws lightning, burns objects and restores it
     expect(burnt.components.health!.current).toBeLessThan(original.components.health!.current);
   }
   await page.mouse.move(100, 100);
-  await page.screenshot({ path: '/tmp/pocket-world-thunderstorm.png' });
+  await page.screenshot({ path: '/tmp/pocket-overlord-thunderstorm.png' });
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
   await expect(tool).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-category="destruction"]')).toHaveAttribute('aria-pressed', 'true');
@@ -941,8 +1077,8 @@ test.describe('default interface language', () => {
   test('starts in English and preserves an explicitly selected language after reload', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page).toHaveTitle('Pocket World — pixel sandbox');
-    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /^Pocket World is a pixel sandbox\./);
+    await expect(page).toHaveTitle('Pocket Overlord — pixel sandbox');
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /^Pocket Overlord is a pixel sandbox\./);
     await expect(page.locator('#tool-name')).toHaveText('Human');
     await expect(page.locator('.speed-controls').getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -953,7 +1089,7 @@ test.describe('default interface language', () => {
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     await expect(page.locator('#tool-name')).toHaveText('Человек');
-    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /^Pocket World — пиксельная песочница\./);
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /^Pocket Overlord — пиксельная песочница\./);
   });
 });
 

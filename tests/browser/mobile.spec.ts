@@ -152,6 +152,30 @@ async function loadGame(page: Page): Promise<void> {
   await page.goto('/'); await expect(page.locator('#loading-screen')).toBeHidden();
 }
 
+test('undo removes touchscreen placements one at a time and stays clear of landscape movement controls', async ({ page }) => {
+  await loadGame(page);
+  const undo = page.getByRole('button', { name: 'Undo last action', exact: true });
+  await expect(undo).toBeDisabled();
+  const target = await page.locator('#world').evaluate(async canvas => {
+    const path = '/src/render/camera.ts', { Camera } = await import(path), camera = new Camera();
+    camera.width = canvas.clientWidth; camera.height = canvas.clientHeight; camera.fit(48, 48); return camera.worldToScreen(24, 24);
+  });
+  await page.touchscreen.tap(target.x, target.y);
+  await page.touchscreen.tap(target.x + 20, target.y);
+  await expect(page.locator('#population')).toHaveText('2');
+  await undo.tap();
+  await expect(page.locator('#population')).toHaveText('1');
+  await expect(undo).toBeEnabled();
+  await undo.tap();
+  await expect(page.locator('#population')).toHaveText('0');
+  await expect(undo).toBeDisabled();
+  await page.locator('[data-category=destruction]').tap();
+  await page.locator('[data-tool="core:kaiju"]').tap();
+  await page.setViewportSize({ width: 844, height: 390 });
+  const button = (await undo.boundingBox())!, directions = (await page.locator('.touch-directions').boundingBox())!;
+  expect(button.y).toBeGreaterThanOrEqual(directions.y + directions.height);
+});
+
 test('the mobile game places people, offers every power and keeps menus usable after rotation', async ({ page }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await loadGame(page);

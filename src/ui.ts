@@ -19,6 +19,7 @@ import { drawWorldPreview } from './render/world-preview';
 const escapeText = (text: string): string => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
 const icons = {
+  undo: '<path fill="currentColor" d="M9 2v5h7v2h3v2h2v8h-2v2h-3v1H8v-4h8v-2h1v-3h-1v-2H9v5H7v-2H5v-2H3V9h2V7h2V5h2z"/>',
   settings: '<path fill="#c5dad9" fill-rule="evenodd" d="M10 1h4v4h2V4h1V3h2v1h1v1h1v2h-1v1h-1v2h4v4h-4v2h1v1h1v2h-1v1h-1v1h-2v-1h-1v-1h-2v4h-4v-4H8v1H7v1H5v-1H4v-1H3v-2h1v-1h1v-2H1v-4h4V8H4V7H3V5h1V4h1V3h2v1h1v1h2zM10 8h4v1h1v1h1v4h-1v1h-1v1h-4v-1H9v-1H8v-4h1V9h1z"/>',
   pause: '<path fill="#12476b" d="M5 5h6v16H5zm10 0h6v16h-6z"/><path fill="#28b3e5" d="M4 3h6v16H4zm10 0h6v16h-6z"/><path fill="#8ce5ee" d="M4 3h2v14H4zm10 0h2v14h-2z"/>',
   play: '<path fill="#12476b" d="M7 4h3v2h3v2h3v2h3v4h-3v2h-3v2h-3v2H7z"/><path fill="#30bde6" d="M5 2h3v2h3v2h3v2h3v2h3v2h-3v2h-3v2h-3v2H8v2H5z"/><path fill="#8ce5ee" d="M5 2h2v16H5z"/>',
@@ -66,6 +67,7 @@ const categories: { id: string; label: string; icon: keyof typeof icons }[] = [
   { id: 'nature', label: 'Природа', icon: 'cloud' },
   { id: 'destruction', label: 'Разрушение', icon: 'destruction' },
 ];
+// Preserve the original key so renaming the game keeps existing tool preferences.
 const SELECTED_TOOL_KEY = 'pocket-world.selected-tool';
 const populationLabels = { human: 'Humans', elf: 'Elves', orc: 'Orcs', dwarf: 'Dwarves' };
 
@@ -76,6 +78,7 @@ export class UI {
   readonly touchControls: HTMLElement;
   readonly speedButtons: HTMLButtonElement[];
   readonly timeToggle: HTMLButtonElement;
+  readonly undo: HTMLButtonElement;
   readonly slower: HTMLButtonElement;
   readonly faster: HTMLButtonElement;
   readonly speedPicker: HTMLButtonElement;
@@ -129,15 +132,17 @@ export class UI {
         <details id="society-panel" class="society-panel" open hidden><summary>Поселения <strong id="village-count">0</strong></summary><div class="society-totals"><span>Семей <b id="families">0</b></span><span>Детей <b id="children">0</b></span><span>Полей <b id="fields">0</b></span></div><div id="village-list" class="village-list"></div><div id="relations" class="relations"></div><div id="alliances" class="alliance-list" aria-label="Состав союзов"></div><div id="campaigns" class="campaign-list" aria-label="Совместные войны"></div><div class="chronicle-title">Летопись мира</div><ol id="chronicle" class="chronicle"></ol></details>
       </aside>
       <button id="settings" class="pixel-button" aria-label="Настройки" title="Настройки">${icon('settings')}</button>
+      <div id="undo-control"><button id="undo" class="pixel-button" aria-label="Отменить последнее действие" aria-describedby="undo-tooltip" disabled>${icon('undo')}</button><div id="undo-tooltip" role="tooltip" hidden>Отменить последнее действие</div></div>
       <div id="save-warning" class="save-warning" role="alert" hidden></div>
       <div id="pause-badge" class="pause-badge" hidden>${icon('pause')} Мир на паузе</div>
       <div id="empty-hint" class="empty-hint"><span class="hint-line"></span>Всё начинается с одного человека<span>Выберите свободное место на карте</span></div>
       <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
       <section class="game-panel" aria-label="Инструменты мира">
-        <nav class="category-tabs" aria-label="Категории инструментов">${availableCategories.map(c => `<button class="category-tab" data-category="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === this.category}" title="${c.label}">${icon(c.icon)}<span>${c.label}</span></button>`).join('')}</nav>
+        <div class="panel-heading"><nav class="category-tabs" aria-label="Категории инструментов">${availableCategories.map(c => `<button class="category-tab" data-category="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === this.category}" title="${c.label}">${icon(c.icon)}<span>${c.label}</span></button>`).join('')}</nav><div class="camera-hint">${icon('fit')}<output id="zoom-value" aria-label="Масштаб карты">100%</output><span>Wheel: zoom · Drag: pan</span></div></div>
         <div class="panel-content">
-          <div class="tool-dock" role="toolbar" aria-label="Выбор инструмента">${[...registry.tools.values()].map(t => `<button class="tool pixel-button" data-tool="${t.id}" aria-label="${t.label}" aria-pressed="false" title="${t.label}">${t.shortcut ? `<kbd>${t.shortcut}</kbd>` : ''}<canvas width="64" height="64" aria-hidden="true"></canvas><span class="sr-only">${t.label}</span></button>`).join('')}</div>
-          <div class="tool-caption"><div class="tool-title"><span id="tool-name">Человек</span><kbd id="tool-key" hidden></kbd></div><p id="tool-hint"></p><div class="camera-hint">${icon('fit')}<output id="zoom-value" aria-label="Масштаб карты">100%</output><span>Wheel: zoom · Drag: pan</span></div></div>
+          <div class="tool-dock" role="toolbar" aria-label="Выбор инструмента">${[...registry.tools.values()].map(t => `<button class="tool" data-tool="${t.id}" aria-label="${t.label}" aria-pressed="false" title="${t.label}">${t.shortcut ? `<kbd>${t.shortcut}</kbd>` : ''}<canvas width="64" height="64" aria-hidden="true"></canvas><span class="sr-only">${t.label}</span></button>`).join('')}</div>
+          <div class="tool-caption"><div class="tool-title"><span id="tool-name">Человек</span><kbd id="tool-key" hidden></kbd></div><p id="tool-hint"></p><button id="tool-info" type="button" aria-label="Описание инструмента" aria-controls="tool-details" aria-expanded="false"><span aria-hidden="true">i</span></button></div>
+          <aside id="tool-details" class="tool-details" aria-labelledby="tool-details-name" hidden><strong id="tool-details-name"></strong><p id="tool-details-hint"></p></aside>
         </div>
       </section>
       <div class="playback-panel">
@@ -165,6 +170,9 @@ export class UI {
         ${debugMode ? `<label class="settings-label" for="biome-select">Island shape</label><select id="biome-select" name="biome"><option value="">Random</option>${BIOMES.map(biome => `<option value="${biome.id}">${escapeText(biome.name)}</option>`).join('')}</select>` : ''}</div><figure class="world-preview"><figcaption>Preview</figcaption><canvas id="world-preview" width="128" height="96" role="img" aria-label="Preview of the new island"></canvas></figure></div><div class="dialog-actions"><button class="secondary" type="button" value="cancel" autofocus>Оставить этот</button><button id="confirm-new" class="primary" type="button" value="new">Создать мир</button></div></dialog>`;
     this.root.insertAdjacentHTML('beforeend', `<dialog id="settings-dialog" aria-labelledby="settings-title"><form method="dialog"><div class="dialog-symbol">${icon('settings')}</div><h2 id="settings-title">Настройки</h2><label class="settings-label" for="language-select">Язык</label><select id="language-select" name="language">${languages.map(language => `<option value="${language.id}" lang="${language.id}">${language.name}</option>`).join('')}</select><p id="language-warning" class="language-warning" role="status" hidden>Не удалось запомнить язык. Выбор действует до перезагрузки страницы.</p><div class="dialog-actions"><button id="new-world" class="secondary" type="button">${icon('globe')}<span>New world</span></button><button class="primary" value="done">Готово</button></div></form></dialog>`);
     this.canvas = this.get('#world'); this.dialog = this.get('#new-dialog'); this.settingsDialog = this.get('#settings-dialog');
+    new ResizeObserver(([entry]) => {
+      this.root.style.setProperty('--tool-panel-height', `${entry.borderBoxSize[0].blockSize}px`);
+    }).observe(this.get('.panel-content'));
     this.touchControls = this.get('#touch-controls');
     document.addEventListener('pointerdown', event => {
       if (event.pointerType === 'touch' && !this.touchInput) {
@@ -173,6 +181,22 @@ export class UI {
     });
     this.get('#settings-dialog .dialog-actions').insertAdjacentHTML('beforebegin', `<div class="seed-setting"><label class="settings-label" for="current-world-seed">World seed</label><div class="seed-controls"><input id="current-world-seed" type="text" readonly><button id="copy-seed" class="secondary" type="button">Copy seed</button></div><p id="seed-copy-status" class="seed-hint" role="status" hidden></p></div>`);
     this.newWorld = this.get('#new-world'); this.confirmNew = this.get('#confirm-new');
+    this.undo = this.get('#undo');
+    const undoControl = this.get('#undo-control'), undoTooltip = this.get('#undo-tooltip');
+    let undoHovered = false;
+    undoControl.addEventListener('pointerenter', event => {
+      if (event.pointerType === 'touch') return;
+      undoHovered = true; undoTooltip.hidden = false;
+    });
+    undoControl.addEventListener('pointerleave', () => {
+      undoHovered = false; if (document.activeElement !== this.undo) undoTooltip.hidden = true;
+    });
+    this.undo.addEventListener('focus', () => { undoTooltip.hidden = false; });
+    this.undo.addEventListener('blur', () => { if (!undoHovered) undoTooltip.hidden = true; });
+    this.undo.addEventListener('click', () => { undoTooltip.hidden = true; });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') undoTooltip.hidden = true;
+    });
     this.seedInput = this.get('#world-seed');
     this.seedInput.addEventListener('input', () => { if (this.readWorldSeed()) this.updateWorldPreview(); });
     this.get('#randomize-seed').addEventListener('click', () => {
@@ -214,6 +238,19 @@ export class UI {
     this.get('.playback-panel').addEventListener('focusout', event => {
       if (!(event.relatedTarget instanceof Node) || !this.get('.playback-panel').contains(event.relatedTarget)) this.closeSpeedMenu();
     });
+    this.get('#tool-info').addEventListener('click', () => this.setToolDetails(this.get('#tool-details').hidden));
+    document.addEventListener('pointerdown', event => {
+      if (!(event.target instanceof Element) || !event.target.closest('#tool-info, #tool-details')) this.setToolDetails(false);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape' || this.get('#tool-details').hidden) return;
+      event.preventDefault(); event.stopPropagation(); this.setToolDetails(false);
+      this.get('#tool-info').focus({ preventScroll: true });
+    }, { capture: true });
+    this.get('.panel-content').addEventListener('focusout', event => {
+      if (!(event.relatedTarget instanceof Node) || !this.get('.panel-content').contains(event.relatedTarget)) this.setToolDetails(false);
+    });
+    window.addEventListener('resize', () => this.setToolDetails(false));
     for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       const canvas = button.querySelector('canvas')!, tool = registry.tools.get(button.dataset.tool!)!;
       if (!paintToolIcon(canvas, tool.id)) drawToolIcon(canvas, tool.icon);
@@ -261,7 +298,7 @@ export class UI {
   private tr(source: string, values: Record<string, string | number> = {}): string { return translate(source, this.language, values); }
   private applyLanguage(): void {
     document.documentElement.lang = this.language;
-    document.title = this.tr('Pocket World — pixel sandbox');
+    document.title = this.tr('Pocket Overlord — pixel sandbox');
     const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (description) description.content = this.tr(this.description);
     for (const { node, source } of this.staticText) if (node.isConnected) {
@@ -278,6 +315,12 @@ export class UI {
     this.saved(this.savedText, this.saveHadError); this.warning(this.warningText);
     this.get('#toast').textContent = this.tr(this.toastText);
     if (this.lastWorld) this.update(this.lastWorld, this.lastZoom);
+  }
+  private setToolDetails(open: boolean): void {
+    this.get('#tool-details').hidden = !open;
+    this.get('#tool-info').setAttribute('aria-expanded', String(open));
+    this.get('.game-panel').classList.toggle('has-tool-details', open);
+    if (open) this.closeSpeedMenu();
   }
   private openSpeedMenu(): void {
     if (!this.timeReady) return;
@@ -333,6 +376,7 @@ export class UI {
     this.faster.disabled = !this.timeReady || world.speed === SIMULATION_SPEEDS[SIMULATION_SPEEDS.length - 1];
   }
   select(tool: ToolDefinition): void {
+    this.setToolDetails(false);
     this.selectedTool = tool.id;
     try { localStorage.setItem(SELECTED_TOOL_KEY, tool.id); }
     catch { /* Tool selection remains usable when browser storage is unavailable. */ }
@@ -346,6 +390,8 @@ export class UI {
       : tool.continuous ? 'Tap or hold to use. Drag to move the map. Pinch to zoom.'
       : 'Tap to use. Drag to move the map. Pinch to zoom.';
     this.get('#tool-hint').textContent = this.tr(this.touchInput ? touchHint : tool.hint);
+    this.get('#tool-details-name').textContent = this.tr(tool.label);
+    this.get('#tool-details-hint').textContent = this.tr(tool.hint);
     this.get('.camera-hint > span:last-child').textContent = this.tr(this.touchInput ? 'Drag: move map · Pinch: zoom' : tool.paintHint ?? (tool.paint ? 'Wheel: zoom · Left-drag: plant · Right-drag: pan' : 'Wheel: zoom · Drag: pan'));
     this.canvas.setAttribute('aria-label', this.tr(this.touchInput ? 'World map. Tap to use a power. Drag to move. Pinch to zoom.' : 'Карта острова. Выберите инструмент и щёлкните по карте.'));
     this.touchControls.hidden = !this.touchInput || !tool.control;
@@ -390,11 +436,15 @@ export class UI {
       const hungry = residents.filter(e => e.components.citizen!.hunger >= 75).length;
       const detail = this.tr(RACES[v.race ?? 'human'].label) + ' · ' + this.tr('{count} жителей · {food} еды', { count: residents.length, food: Math.floor(v.food) }) + (hungry ? this.tr(' · {count} голодают', { count: hungry }) : '');
       const elder = v.government?.leaderId ? this.tr('Elder: {name} · Trust: {trust}%', { name: residentName(v.government.leaderId), trust: Math.round(v.government.trust) }) : this.tr('No elder elected');
+      const stone = v.economy ? `<span class="stone-stocks">${escapeText(this.tr('Stone: {stone} · Axes in stock: {axes}', { stone: Math.floor(v.economy.stocks.stone), axes: v.economy.stocks.stoneAxes }))}</span><span>${escapeText(this.tr('Stone homes: {homes} · Armed residents: {armed}', {
+        homes: [...world.query('dwelling')].filter(e => e.components.dwelling!.villageId === v.id && e.components.dwelling!.level === 2).length,
+        armed: residents.filter(e => e.components.citizen!.weapon === 'stone-axe').length,
+      }))}</span>` : '';
       const newcomers = residents.flatMap(e => e.components.citizen!.integration ? [e.components.citizen!.integration!] : []);
       const integration = newcomers.length ? `<span title="${escapeText(this.tr('Newcomers settle in through housing, work and friendships. Isolated families may move again.'))}">${escapeText(this.tr('Newcomers: {settling} settling in · {settled} settled · {isolated} isolated', {
         settling: newcomers.filter(s => s.status === 'settling').length, settled: newcomers.filter(s => s.status === 'settled').length, isolated: newcomers.filter(s => s.status === 'isolated').length,
       }))}</span>` : '';
-      return `<div class="village-row"><span class="village-flag" style="background:${villageColor(v.id)}"></span><div><strong>${escapeText(localizedSettlementName(world.seed, v, this.language))}</strong><span>${escapeText(detail)}</span><span>${escapeText(elder)}</span>${integration}</div></div>`;
+      return `<div class="village-row"><span class="village-flag" style="background:${villageColor(v.id)}"></span><div><strong>${escapeText(localizedSettlementName(world.seed, v, this.language))}</strong><span>${escapeText(detail)}</span><span>${escapeText(elder)}</span>${stone}${integration}</div></div>`;
     }).join(''));
     const groups = allianceGroups(world.society), wars = world.society.wars.length;
     const roads = world.society.roads.filter(r => roadIsIntact(world, r)).length;

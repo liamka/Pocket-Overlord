@@ -6,7 +6,7 @@ export function governance(world: World): void {
   if (world.tick % 30 !== 0) return;
   for (const village of world.society.villages) {
     const people = [...world.query('person', 'citizen')].filter(e => e.components.citizen!.villageId === village.id && e.components.citizen!.task !== 'migrate');
-    const adults = people.filter(e => e.components.person!.age >= 18);
+    const adults = people.filter(e => e.components.person!.age >= 18 && !e.components.person!.madness);
     if (!adults.length && !village.government) continue;
     const g = governmentOf(village), previous = g.leaderId;
     if (!adults.some(e => e.id === g.leaderId)) g.leaderId = null;

@@ -1,4 +1,5 @@
 import { aboardFerry } from '../core/ferries';
+import { liftedIds } from '../core/cataclysms';
 import type { Registry } from '../content/registry';
 import { integer, number, record } from '../core/validation';
 import type { World } from '../core/world';
@@ -205,13 +206,14 @@ export function processEvents(world: World): void {
 }
 
 export function water(world: World, dt: number): void {
+  const lifted = liftedIds(world);
   for (const entity of world.query('thermal', 'position')) {
-    if (entity.components.ship || aboardFerry(world, entity.id)) continue;
+    if (entity.components.ship || lifted.has(entity.id) || aboardFerry(world, entity.id)) continue;
     const p = entity.components.position!;
     if (!world.terrain.isLand(p.x, p.y)) applyEvent(world, { kind: 'wet', target: entity.id, amount: 1 });
   }
   for (const entity of world.query('person', 'health', 'position')) {
-    if (aboardFerry(world, entity.id)) continue;
+    if (lifted.has(entity.id) || aboardFerry(world, entity.id)) continue;
     const p = entity.components.position!;
     // Existing health stores exhaustion across saves; a healthy adult lasts about ten seconds.
     if (!world.terrain.isLand(p.x, p.y)) applyEvent(world, { kind: 'damage', target: entity.id, amount: 7 * dt });

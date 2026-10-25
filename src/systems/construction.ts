@@ -1,11 +1,12 @@
 import type { Entity, Vec2 } from '../core/types';
 import type { World } from '../core/world';
-import { recordService } from '../core/village-life';
+import { economyOf, recordService } from '../core/village-life';
+import { STONE } from '../core/stone';
 import { HAMMER_CONTACT, angleDelta, initialResidentAnimation, residentAction } from '../core/resident-animation';
 import { RACES, raceOf } from '../core/races';
 import { aboardFerry } from '../core/ferries';
 import { findPath } from './navigation';
-import { atWar, buildHouse } from './society';
+import { atWar, buildHouse, villageOf } from './society';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const danger = (world: World, p: Vec2): boolean => world.nearby(p, 5).some(e => e.components.explosive || e.components.thermal?.burning);
@@ -60,6 +61,18 @@ export function assignConstruction(world: World, entity: Entity): boolean {
     const workers = [...world.query('citizen')].filter(e => e.components.citizen!.task === 'build' && e.components.citizen!.targetId === house.id);
     if (workers.length < 2 && takeJob(world, entity, house)) return true;
   }
+  const village = villageOf(world, c.villageId);
+  if (!village || c.work?.cargo || c.hunger >= 55 || entity.components.person!.age < 18 || c.emergency) return false;
+  const stocks = economyOf(village).stocks;
+  if (stocks.stone < STONE.houseCost || stocks.wood < STONE.houseWood) return false;
+  for (const house of world.query('dwelling', 'position')) {
+    const home = house.components.dwelling!;
+    if (home.villageId !== village.id || home.level || home.construction || distance(p, house.components.position!) > 22) continue;
+    home.construction = { progress: 0, struckAt: -1, upgrade: true };
+    if (!eligible(world, entity, house) || !takeJob(world, entity, house)) { delete home.construction; continue; }
+    stocks.stone -= STONE.houseCost; stocks.wood -= STONE.houseWood;
+    return true;
+  }
   return false;
 }
 
@@ -85,6 +98,13 @@ export function construction(world: World, dt: number): void {
     site.progress = Math.min(1, site.progress + 1 / 12); site.struckAt = world.tick;
     if (site.progress < 1 - 1e-8) continue;
     recordService(entity, 3);
+    if (site.upgrade) {
+      const home = house!.components.dwelling!, health = house!.components.health!;
+      home.level = 2; home.capacity = STONE.houseCapacity;
+      health.max += STONE.houseHealth; health.current += STONE.houseHealth;
+      const village = villageOf(world, home.villageId);
+      if (village) world.announce(`${village.name}: a home was upgraded with stone`);
+    }
     delete house!.components.dwelling!.construction;
     for (const worker of world.query('citizen')) if (worker.components.citizen!.task === 'build' && worker.components.citizen!.targetId === house!.id) stop(worker);
     world.visual({ kind: 'build', ...house!.components.position!, radius: 2 });

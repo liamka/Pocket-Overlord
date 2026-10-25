@@ -92,7 +92,7 @@ export function villages(world: World): void {
   world.society.roads = world.society.roads.filter(r => active.has(r.a) && active.has(r.b));
 
   if (world.tick % 150 === 0) for (const village of world.society.villages) {
-    const adults = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === village.id && e.components.citizen!.task !== 'migrate' && e.components.person!.age >= 18 && !e.components.thermal?.burning && world.terrain.isLand(e.components.position!.x, e.components.position!.y));
+    const adults = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === village.id && e.components.citizen!.task !== 'migrate' && e.components.person!.age >= 18 && !e.components.person!.madness && !e.components.thermal?.burning && world.terrain.isLand(e.components.position!.x, e.components.position!.y));
     for (const field of world.query('farm', 'position')) {
       if (field.components.farm!.villageId === village.id && !fertilePatch(world, field.components.position!)) world.remove(field.id);
     }

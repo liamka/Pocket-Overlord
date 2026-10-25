@@ -82,9 +82,14 @@ test('startup is visible before the bundle arrives and reveals a painted world',
     await expect(page.locator('#world')).toHaveCount(0);
     await expect(page.locator('#app')).toHaveJSProperty('inert', true);
     expect(await page.locator('#loading-screen').boundingBox()).toEqual({ x: 0, y: 0, width: 390, height: 640 });
-    await expect(page.locator('.loading-indicator span').first()).toHaveCSS('animation-name', 'none');
-    const card = (await page.locator('.loading-card').boundingBox())!;
-    expect(card.x).toBeGreaterThan(0); expect(card.x + card.width).toBeLessThan(390);
+    const island = page.locator('#loading-island');
+    await expect(island).toBeVisible();
+    expect(await island.evaluate((canvas: HTMLCanvasElement) => [...canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data].some(value => value > 0))).toBe(true);
+    const stillFrame = await island.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+    await page.waitForTimeout(200);
+    expect(await island.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(stillFrame);
+    const bounds = (await island.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
   } finally { release(); }
   await expect(page.locator('#loading-screen')).toBeHidden();
   await expect(page.locator('#app')).toHaveJSProperty('inert', false);
@@ -226,7 +231,7 @@ test('startup failure offers a working retry instead of endless loading', async 
   });
   await page.goto('/');
   await expect(page.locator('#loading-message')).toHaveText('Could not load the world.');
-  await expect(page.locator('.loading-indicator')).toBeHidden();
+  await expect(page.locator('#loading-island')).toBeVisible();
   await expect(page.locator('#loading-progress')).toBeHidden();
   await expect(page.locator('#loading-progress')).toHaveAttribute('aria-valuenow', '50');
   await expect(page.getByRole('button', { name: 'Try again' })).toBeFocused();

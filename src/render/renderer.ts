@@ -1,7 +1,7 @@
 import { aboardFerry, ferryRoutes } from '../core/ferries';
 import { drawFerries } from './ferries';
 import { drawResident } from './residents';
-import { drawConstruction } from './construction';
+import { drawConstruction, drawStoneHouse } from './construction';
 import { drawRuin } from './recovery';
 import type { ToolDefinition } from '../content/registry';
 import { noise } from '../core/random';
@@ -34,6 +34,9 @@ import { drawThunderstorms } from './thunderstorms';
 import { drawHarbor, drawMooring, drawShip, drawShipWake } from './seafaring';
 import { drawUfo, drawUfoGround } from './ufos';
 import { captureLandPatch, TerraformAnimations } from './terraforming';
+import { liftedIds } from '../core/cataclysms';
+import { cataclysmShake, drawCataclysmGround, drawCataclysms } from './cataclysms';
+import { drawGeohazardGround, drawGeohazardAir, drawVolcano } from './geohazards';
 
 interface Particle { x: number; y: number; vx: number; vy: number; age: number; life: number; color: string; size: number }
 const PARTICLE_LIMIT = 600;
@@ -213,6 +216,9 @@ export class Renderer {
       else this.destruction.explode(x, y, radius, water, visual.style === 'napalm' ? undefined : visual.style);
     }
     const shake = this.superweapons.shake(world);
+    const clapShake = cataclysmShake(world, (x, y) => origin.x + x * TILE * camera.zoom >= 0 && origin.x + x * TILE * camera.zoom <= camera.width
+      && origin.y + y * TILE * camera.zoom >= 0 && origin.y + y * TILE * camera.zoom <= camera.height);
+    shake.x += clapShake.x; shake.y += clapShake.y;
     for (const entity of world.query('kaiju', 'position')) {
       const p = entity.components.position!, state = entity.components.kaiju!;
       if (origin.x + p.x * TILE * camera.zoom < -100 || origin.x + p.x * TILE * camera.zoom > camera.width + 100
@@ -224,6 +230,8 @@ export class Renderer {
     ctx.drawImage(this.ground, 0, 0);
     this.terraforming.ground(ctx);
     this.superweapons.ground(ctx, world);
+    drawCataclysmGround(ctx, world);
+    drawGeohazardGround(ctx, world);
     this.ocean.drawWaves(ctx, world, false);
     this.collapses.ground(ctx);
     for (const entity of world.query('kaiju', 'position')) {
@@ -267,7 +275,9 @@ export class Renderer {
       if (!world.entities.get(id)?.components.caravan) deckOffsets.set(id, { x: (n % 3 - 1) * 5, y: Math.floor(n / 3) * 4 - 2 });
     });
     const entities = [...world.query('position')].sort((a, b) => a.components.position!.y - b.components.position!.y || a.id - b.id);
+    const lifted = liftedIds(world);
     for (const entity of entities) {
+      if (lifted.has(entity.id)) continue;
       this.collapses.drawBefore(ctx, entity.components.position!.y * TILE);
       if (entity.components.harbor || entity.components.ship) {
         const owner = entity.components.harbor?.villageId ?? world.entities.get(entity.components.ship?.homeId ?? -1)?.components.harbor?.villageId;
@@ -294,7 +304,8 @@ export class Renderer {
         continue;
       }
       const screenX = origin.x + x * camera.zoom, screenY = origin.y + y * camera.zoom;
-      if (screenX < -40 || screenX > camera.width + 40 || screenY < -40 || screenY > camera.height + 60) continue;
+      const margin = entity.components.volcano ? 50 * camera.zoom : 40;
+      if (screenX < -margin || screenX > camera.width + margin || screenY < -margin || screenY > camera.height + Math.max(60, margin)) continue;
       if (entity.typeId === NAPALM_FIRE_ID) {
         if (thermal?.burning && !submerged) this.napalm.fire(ctx, x, y, entity.components.combustible!.fuel, time, entity.id);
         continue;
@@ -314,9 +325,11 @@ export class Renderer {
       if (caravan?.path[caravan.next] && caravan.path[caravan.next].x < p!.x) ctx.scale(-1, 1);
       const race = caravan ? world.society.villages.find(v => v.id === caravan.fromId)?.race ?? 'human' : raceOf(entity);
       if (person) drawResident(ctx, world, entity, villageId ? villageColor(villageId) : undefined);
+      else if (entity.components.volcano) drawVolcano(ctx, entity.components.volcano);
       else if (entity.components.animal) drawAnimal(ctx, entity.components.animal, villageId ? villageColor(villageId) : undefined);
       else if (entity.components.ruin) drawRuin(ctx, entity);
       else if (dwelling?.construction) drawConstruction(ctx, entity, world.tick, villageId ? villageColor(villageId) : undefined);
+      else if (dwelling?.level === 2) drawStoneHouse(ctx, entity, time, villageId ? villageColor(villageId) : undefined);
       else if (sprite !== 'tree' || !drawBiomeTree(ctx, world.terrain.biomeAt(p!.x, p!.y).id, appearance?.variant)) {
         drawSprite(ctx, sprite, appearance?.variant, time + entity.id, false, caravan ? caravan.food / 12 : farm?.growth, villageId ? villageColor(villageId) : undefined, race);
       }
@@ -381,7 +394,12 @@ export class Renderer {
         const lines = [g?.leaderId ? translate('Elder: {name} · Trust: {trust}%', language, { name: residentName(g.leaderId), trust: Math.round(g.trust) }) : translate('No elder elected', language),
           translate('Sheep: {sheep} · Dogs: {dogs}', language, { sheep: herd.filter(a => a.components.animal!.kind === 'sheep').length, dogs: herd.filter(a => a.components.animal!.kind === 'dog').length }),
           ...(e ? [translate('Grain: {grain} · Flour: {flour} · Bread: {bread}', language, { grain: Math.floor(e.stocks.grain), flour: Math.floor(e.stocks.flour), bread: Math.floor(e.stocks.bread) }),
-            translate('Wood: {wood} · Tools: {tools} · Deliveries: {count}', language, { wood: Math.floor(e.stocks.wood), tools: Math.floor(e.stocks.tools), count: e.deliveries })] : [])];
+            translate('Wood: {wood} · Tools: {tools} · Deliveries: {count}', language, { wood: Math.floor(e.stocks.wood), tools: Math.floor(e.stocks.tools), count: e.deliveries }),
+            translate('Stone: {stone} · Axes in stock: {axes}', language, { stone: Math.floor(e.stocks.stone), axes: e.stocks.stoneAxes }),
+            translate('Stone homes: {homes} · Armed residents: {armed}', language, {
+              homes: [...world.query('dwelling')].filter(e => e.components.dwelling!.villageId === village.id && e.components.dwelling!.level === 2).length,
+              armed: [...world.query('citizen')].filter(e => e.components.citizen!.villageId === village.id && e.components.citizen!.weapon === 'stone-axe').length,
+            })] : [])];
         ctx.save(); ctx.translate(x, y + 13); ctx.scale(1 / camera.zoom, 1 / camera.zoom);
         ctx.font = ctx.font.replace('10px', '12px');
         const panelWidth = Math.max(...lines.map(line => ctx.measureText(line).width)) + 20, panelHeight = lines.length * 18 + 12;
@@ -445,9 +463,12 @@ export class Renderer {
       }
     }
     drawThunderstorms(ctx, world);
+    drawGeohazardAir(ctx, world);
+    drawCataclysms(ctx, world);
     // Overlay badges after the scene so houses and trees cannot cover them.
     // Only residents are visited; the two cached bitmaps need one draw call each.
     for (const person of world.query('person', 'position')) {
+      if (lifted.has(person.id)) continue;
       const kind = this.statuses.icon(person), p = person.components.position!;
       if (!kind || !world.terrain.isLand(p.x, p.y)) continue;
       const x = Math.round(p.x * TILE) - 9, y = Math.round(p.y * TILE) - 37;

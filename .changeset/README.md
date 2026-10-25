@@ -4,7 +4,7 @@ Create a separate changeset after every project change, including documentation,
 configuration and rule changes:
 
 ```sh
-npm run changeset -- --patch pocket-world -m "Describe the change in English"
+npm run changeset -- --patch pocket-overlord -m "Describe the change in English"
 ```
 
 Keep each record until release. Do not append unrelated changes to an existing

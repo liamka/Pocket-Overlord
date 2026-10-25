@@ -20,7 +20,7 @@ export function beginIntegration(world: World, entity: Entity, group: Migration)
 
 function available(world: World, entity: Entity): boolean {
   const c = entity.components.citizen, p = entity.components.position;
-  return !!c && !!p && !c.emergency && c.hunger < 55 && !c.work?.cargo
+  return !!c && !!p && !entity.components.person?.madness && !c.emergency && c.hunger < 55 && !c.work?.cargo
     && !world.society.wars.some(war => war.attackers.includes(c.villageId ?? -1) || war.defenders.includes(c.villageId ?? -1))
     && ['idle', 'farm', 'visit', 'socialize'].includes(c.task) && !aboardFerry(world, entity.id)
     && world.terrain.isLand(p.x, p.y) && !entity.components.thermal?.burning && !unsafe(world, p);
@@ -96,7 +96,7 @@ export function integration(world: World): void {
         if (key === 'contactId') state.contact = 0;
       }
     }
-    if (state.status === 'settled' || c.task === 'migrate' || c.emergency || aboardFerry(world, entity.id)
+    if (entity.components.person!.madness || state.status === 'settled' || c.task === 'migrate' || c.emergency || aboardFerry(world, entity.id)
       || entity.components.thermal?.burning || !world.terrain.isLand(entity.components.position!.x, entity.components.position!.y)) continue;
     const residents = people.filter(e => e.components.citizen!.villageId === village.id && e.components.citizen!.task !== 'migrate');
     const home = world.entities.get(entity.components.person!.homeId ?? -1);

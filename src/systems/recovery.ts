@@ -14,7 +14,8 @@ export function destroyHome(world: World, house: Entity): void {
   if (!world.terrain.isLand(p.x, p.y)) return;
   const ruin = world.spawn('core:ruin', p);
   if (!ruin) return;
-  Object.assign(ruin.components.ruin!, { homeId: house.id, race: raceOf(house), villageId: home.villageId, capacity: home.capacity, destroyedAt: world.tick });
+  // A collapsed stone house is rebuilt as a basic home; its upgrade materials were lost.
+  Object.assign(ruin.components.ruin!, { homeId: house.id, race: raceOf(house), villageId: home.villageId, capacity: home.level === 2 ? 5 : home.capacity, destroyedAt: world.tick });
   ruin.components.appearance!.variant = house.components.appearance?.variant ?? 0;
 }
 

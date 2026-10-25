@@ -1,6 +1,7 @@
 import { aboardFerry, ferryRoutes } from './ferries';
 import { createRegistry } from '../content/defaults';
 import { refreshLegacySettlementNames } from '../content/settlement-names';
+import { seedStone } from '../content/stone';
 import type { Registry } from '../content/registry';
 import { Random } from './random';
 import { SpatialGrid } from './spatial';
@@ -50,6 +51,7 @@ export class World {
           if (this.terrain.at(p.x, p.y) === Terrain.Grass && !this.terrain.surfaceAt(p.x, p.y) && this.rng.next() < this.terrain.biomeAt(p.x, p.y).trees * (1 + grove * 0.9)) this.spawn('core:tree', p);
         }
       }
+      seedStone(this);
     }
   }
   get population(): number { return this.componentIndex.get('person')?.size ?? 0; }

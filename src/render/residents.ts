@@ -3,11 +3,13 @@ import type { RaceId } from '../core/races';
 import { raceOf } from '../core/races';
 import type { World } from '../core/world';
 import { initialResidentAnimation, residentAction, type ResidentAction } from '../core/resident-animation';
+import { plagueSeverity } from '../core/afflictions';
 
 type Point = readonly [number, number];
 export interface ResidentPose extends Partial<ResidentAnimation> {
   time?: number; variant?: number; race?: RaceId; child?: boolean; color?: string;
-  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'bucket' | 'bandage' | 'feed'; load?: 'planks' | 'pack' | 'grain' | 'flour' | 'bread' | 'tools';
+  sickness?: number; rage?: boolean;
+  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'stone-axe' | 'pickaxe' | 'bucket' | 'bandage' | 'feed'; load?: 'planks' | 'pack' | 'grain' | 'flour' | 'bread' | 'tools' | 'stone' | 'stoneAxes';
 }
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w = 1, h = 1): void => {
   ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
@@ -33,8 +35,9 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   const { time = 0, stride = 0, moving = 0, heading = Math.PI / 2, work = 0, action = 'idle', variant = 0, race = 'human', child = false } = pose;
   ctx.save(); if (child) ctx.scale(0.75, 0.75);
   const wide = race === 'orc' || race === 'dwarf', short = race === 'dwarf', elf = race === 'elf';
-  const skin = race === 'orc' ? '#8bb456' : short ? '#e4b986' : elf ? '#edcfaa' : '#e6bf91';
-  const shade = race === 'orc' ? '#567a38' : '#be9068';
+  const sick = (pose.sickness ?? 0) > 0.15;
+  const skin = sick ? race === 'orc' ? '#98a35c' : '#bbb580' : race === 'orc' ? '#8bb456' : short ? '#e4b986' : elf ? '#edcfaa' : '#e6bf91';
+  const shade = sick ? '#7b8050' : race === 'orc' ? '#567a38' : '#be9068';
   const shirt = pose.color ?? (elf ? '#8fb76b' : race === 'orc' ? '#a77d48' : short ? '#bd8c51' : ['#ead6a0', '#a7cad1', '#d9947e', '#c7aed4', '#e6be76'][variant % 5]);
   const dark = elf ? '#365b3d' : race === 'orc' ? '#5e4730' : short ? '#686e70' : '#4d635f';
   const boots = elf ? '#40563b' : '#453e38';
@@ -43,8 +46,9 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   const back = Math.sin(heading) < -0.4, front = Math.abs(Math.cos(heading)) < 0.45;
   const working = action === 'build' || action === 'repair' || action === 'farm' || action === 'fight' || action === 'extinguish' || action === 'aid';
   const contact = working ? Math.max(0, 1 - Math.abs(work - 0.65) / 0.17) : 0;
-  const bob = -Math.abs(swing) * 0.65 * blend + (action === 'idle' ? Math.sin(time * 2.3) * 0.16 : 0) + contact * 0.55;
-  const lean = facing * contact * 0.8 + Math.cos(heading) * blend * 0.25;
+  const cough = sick && !working && !swimming && action !== 'carry' ? Math.max(0, Math.sin(time * 1.8) - 0.78) / 0.22 : 0;
+  const bob = -Math.abs(swing) * 0.65 * blend + (action === 'idle' ? Math.sin(time * 2.3) * 0.16 : 0) + contact * 0.55 + cough;
+  const lean = facing * (contact * 0.8 + cough * 1.5) + Math.cos(heading) * blend * 0.25;
   const chestY = (short ? -5 : -7) + bob, headY = chestY - (elf ? 5 : 4);
   const shoulder = (wide ? 3.5 : 2.5) * (front ? 1 : 0.85);
   pixel(ctx, '#2c493c44', -3, 2, wide ? 8 : 7, 2);
@@ -65,6 +69,8 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
       const angle = action === 'farm' ? toolAngle * 0.65 + 0.3 : toolAngle;
       elbow = [shoulderPoint[0] + Math.cos(heading) * (1 + Math.cos(angle) * 1.1), shoulderPoint[1] + Math.sin(angle) * 1.7 + 1 + Math.sin(heading) * 0.5];
       hand = [shoulderPoint[0] + Math.cos(heading) * (2 + Math.cos(angle) * 2), shoulderPoint[1] + Math.sin(angle) * 3 + Math.sin(heading) * (2 + Math.cos(angle) * 2) * 0.55];
+    } else if (cough > 0.1 && side === facing) {
+      elbow = [shoulderPoint[0] + facing * 2, chestY + 2]; hand = [lean + facing * 2, headY + 4];
     } else if (action === 'carry' && pose.load !== 'pack') {
       elbow = [shoulderPoint[0] + side, chestY + 3]; hand = [side * 3 + lean, chestY + 2];
     } else if (swimming) {
@@ -106,9 +112,11 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   }
   if (back) pixel(ctx, race === 'orc' ? '#567a38' : short ? '#78817b' : elf ? '#c5ae6d' : '#6a4d36', hx - 2, headY + 1, 4, 3);
   else {
-    pixel(ctx, '#303b32', hx + (front ? -1 : facing * 2), headY + 2);
-    if (front) pixel(ctx, '#303b32', hx + 2, headY + 2);
+    const eye = pose.rage ? '#a33027' : '#303b32';
+    pixel(ctx, eye, hx + (front ? -1 : facing * 2), headY + 2);
+    if (front) pixel(ctx, eye, hx + 2, headY + 2);
     else pixel(ctx, skin, hx + facing * 3, headY + 3, 1, 1);
+    if (pose.rage) pixel(ctx, '#643b2f', hx + (front ? -1 : facing * 2), headY + 1, front ? 4 : 2);
   }
   if (pose.load === 'pack') {
     pixel(ctx, '#705138', lean - facing * 3 - 2, chestY + 1, 4, 6); pixel(ctx, '#c5a171', lean - facing * 3 - 1, chestY + 1, 3, 5);
@@ -116,9 +124,10 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   const hand = arms(facing);
   if (action === 'carry' && pose.load !== 'pack') {
     if (pose.load && pose.load !== 'planks') {
-      const shade = pose.load === 'flour' ? '#eee1ba' : pose.load === 'bread' ? '#d9a155' : '#bba06b';
+      const shade = pose.load === 'stone' ? '#929f99' : pose.load === 'flour' ? '#eee1ba' : pose.load === 'bread' ? '#d9a155' : '#bba06b';
       pixel(ctx, '#69563a', -5 + lean, chestY - 2, 11, 8); pixel(ctx, shade, -4 + lean, chestY - 3, 9, 8);
-      if (pose.load === 'tools') { pixel(ctx, '#d5dfce', -2 + lean, chestY - 5, 6, 2); pixel(ctx, '#725137', lean, chestY - 3, 2, 5); }
+      if (pose.load === 'tools' || pose.load === 'stoneAxes') { pixel(ctx, pose.load === 'stoneAxes' ? '#9daaa3' : '#d5dfce', -2 + lean, chestY - 5, 6, 3); pixel(ctx, '#725137', lean, chestY - 3, 2, 5); }
+      else if (pose.load === 'stone') { pixel(ctx, '#c3ccc0', -3 + lean, chestY - 4, 4, 3); pixel(ctx, '#5f716c', lean, chestY, 3, 2); }
       else { pixel(ctx, '#7c653e', -1 + lean, chestY - 4, 3, 2); pixel(ctx, '#fff0c4', -3 + lean, chestY - 1, 2, 3); }
     } else {
     for (let i = 0; i < 3; i++) {
@@ -146,8 +155,14 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
     const tip: Point = [hand[0] + Math.cos(heading) * Math.cos(angle) * length, hand[1] + Math.sin(angle) * length + Math.sin(heading) * Math.cos(angle) * length * 0.55];
     limb(ctx, tool === 'sword' ? '#d3ded7' : '#947246', hand, tip);
     if (tool === 'sword') limb(ctx, '#c6a76a', [hand[0] - 1, hand[1]], [hand[0] + 2, hand[1]]);
-    else {
-      const normal: Point = [-facing * Math.sin(angle) * 2, Math.cos(angle) * 2];
+    else if (tool === 'stone-axe') {
+      pixel(ctx, '#53605e', tip[0] - 3, tip[1] - 2, 6, 5);
+      pixel(ctx, '#aab5ab', tip[0] - 3, tip[1] - 2, 4, 4);
+      pixel(ctx, '#d5d9cb', tip[0] - 3, tip[1] - 2, 1, 4);
+      pixel(ctx, '#c1a16a', tip[0] + 1, tip[1] - 1, 2, 2);
+    } else {
+      const span = tool === 'pickaxe' ? 4 : 2;
+      const normal: Point = [-facing * Math.sin(angle) * span, Math.cos(angle) * span];
       limb(ctx, '#4c5e61', [tip[0] - normal[0], tip[1] - normal[1]], [tip[0] + normal[0], tip[1] + normal[1]], 2);
       pixel(ctx, '#dae1cd', tip[0] - normal[0], tip[1] - normal[1], 2, 1);
     }
@@ -167,8 +182,30 @@ export function drawResident(ctx: CanvasRenderingContext2D, world: World, entity
   const action = residentAction(world, entity);
   drawResidentSprite(ctx, { ...(person.animation ?? initialResidentAnimation(entity.components.motion?.heading)), action,
     time: world.tick / 30 + entity.id * 0.37, variant: entity.components.appearance?.variant, race: raceOf(entity), child: person.age < 18, color,
+    sickness: plagueSeverity(entity), rage: !!person.madness,
     load: c?.task === 'migrate' ? 'pack' : c?.work?.cargo ? c.work.cargo.good === 'wood' ? 'planks' : c.work.cargo.good : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
-      : c?.task === 'tend' ? 'feed' : c?.task === 'build' || c?.task === 'repair' || c?.task === 'work' ? 'hammer' : c?.task === 'farm' ? 'hoe' : c?.task === 'fight' || c?.task === 'guard' ? 'sword' : undefined });
+      : c?.task === 'tend' ? 'feed' : c?.task === 'work' && c.work?.good === 'stone' ? 'pickaxe'
+      : c?.task === 'build' || c?.task === 'repair' || c?.task === 'work' ? 'hammer' : c?.task === 'farm' ? 'hoe'
+      : c?.task === 'fight' || c?.task === 'guard' ? c.weapon ?? 'sword' : c?.weapon });
+  const top = person.age < 18 ? -17 : -21;
+  if (person.plague) {
+    const time = person.plague.age, severity = plagueSeverity(entity), y = top + Math.sin(time * 2 + entity.id) * 0.5;
+    // A small olive skull remains readable at map scale; symptoms develop gradually.
+    pixel(ctx, '#39472e', -4, y, 7, 5); pixel(ctx, '#bac985', -3, y, 5, 4);
+    pixel(ctx, '#33412b', -2, y + 1); pixel(ctx, '#33412b', 1, y + 1);
+    pixel(ctx, '#bac985', -2, y + 4, 3, 2); pixel(ctx, '#697b42', -1, y + 4);
+    if (severity > 0.15) for (let i = 0; i < 2; i++) {
+      const phase = time * (3.4 + i) + entity.id + i * 2.4;
+      const x = Math.cos(phase) * (6 + i * 2), y = -10 + Math.sin(phase * 1.3) * 5;
+      pixel(ctx, '#3d4231', x, y); pixel(ctx, '#c5cca17a', x + Math.sin(phase * 8), y - 1);
+    }
+  }
+  if (person.madness) {
+    const x = person.plague ? 7 : 4, y = top + 2 + Math.sin(person.madness.age * 5) * 0.5;
+    limb(ctx, '#63362a', [x - 1, y - 1], [x - 1, y + 5], 2);
+    limb(ctx, '#d76a43', [x, y - 2], [x, y + 1]); limb(ctx, '#d76a43', [x, y + 1], [x - 3, y + 1]);
+    limb(ctx, '#efae65', [x + 2, y + 2], [x + 5, y + 2]); limb(ctx, '#d76a43', [x + 2, y + 2], [x + 2, y + 5]);
+  }
   const neighbor = world.entities.get(c?.targetId ?? -1)?.components.position, p = entity.components.position!;
   if (c?.task === 'socialize' && !c.emergency && neighbor && Math.hypot(p.x - neighbor.x, p.y - neighbor.y) <= 2.2) {
     const y = person.age < 18 ? -22 : -28;

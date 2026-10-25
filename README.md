@@ -1,6 +1,6 @@
-# 🌍 Pocket World
+# 🌍 Pocket Overlord
 
-![Pocket World — a pixel globe above the game title](public/og-image.png)
+![Pocket Overlord — a pixel globe above the game title](public/og-image.png)
 
 > **A living pixel world in your hands.**
 >
@@ -16,7 +16,7 @@
 
 ## 📖 Overview
 
-**Pocket World** is a browser sandbox about small worlds and the people who inhabit them. Place the first settlers and watch them build homes, raise families, grow food and connect their villages with roads.
+**Pocket Overlord** is a browser sandbox about small worlds and the people who inhabit them. Place the first settlers and watch them build homes, raise families, grow food and connect their villages with roads.
 
 Every settlement has its own story. Neighbors share supplies, form alliances, fight wars and search for safer places to live. The seasons change what they can harvest and how much food they need. Your tools can help them recover—or leave them rebuilding after a disaster.
 

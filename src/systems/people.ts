@@ -13,9 +13,13 @@ import { recordResidentMovement } from '../core/resident-animation';
 import { assignConstruction, continueConstruction, startConstruction } from './construction';
 import { emergencyReach, isEmergency } from './emergencies';
 import { rebuildHome } from './recovery';
-import { assignVillageWork, continueVillageWork } from './economy';
+import { assignEquipment, assignVillageWork, continueEquipping, continueVillageWork } from './economy';
+import { weaponBonus } from '../core/stone';
 import { assignAnimalCare, continueAnimalCare } from './husbandry';
 import { assignSocializing, continueSocializing } from './integration';
+import { liftedIds } from '../core/cataclysms';
+import { plagueSeverity } from '../core/afflictions';
+import { madnessIntent } from './afflictions';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const endangered = (world: World, p: Vec2): boolean => world.nearby(p, 7).some(e => e.components.explosive || e.components.thermal?.burning);
@@ -49,7 +53,9 @@ function swim(world: World, entity: Entity, dt: number): void {
 }
 
 export function movement(world: World, dt: number): void {
+  const lifted = liftedIds(world);
   for (const entity of world.query('motion', 'position')) {
+    if (lifted.has(entity.id)) continue;
     const { motion: m, position: p, person, citizen } = entity.components;
     const previous = { ...p! };
     if (person) person.age += dt * 0.3;
@@ -57,13 +63,16 @@ export function movement(world: World, dt: number): void {
     if (person && (!isEmergency(entity) || aboardFerry(world, entity.id)) && approachFerry(world, entity, dt)) { recordResidentMovement(entity, previous, dt, aboardFerry(world, entity.id)); continue; }
     if (person && !world.terrain.isLand(p!.x, p!.y)) { swim(world, entity, dt); recordResidentMovement(entity, previous, dt); continue; }
     let speed = m!.speed * (person && person.age < 18 ? 0.7 : 1);
+    if (person?.madness) speed *= 1.35;
+    speed *= 1 - plagueSeverity(entity) * 0.45;
     if (isRoadSurface(world.terrain.at(p!.x, p!.y))) speed *= 1.4;
     else speed *= world.terrain.biomeAt(p!.x, p!.y).walking;
     let fleeX = 0, fleeY = 0;
     for (const other of world.nearby(p!, 8)) {
       if (other.id === entity.id) continue;
-      const enemy = citizen && other.components.citizen && atWar(world, citizen.villageId, other.components.citizen.villageId)
-        && (person!.age < 18 || citizen.task !== 'fight');
+      const enemy = citizen && !person?.madness && other.components.citizen
+        && (other.components.person?.madness ? person!.age < 18
+          : atWar(world, citizen.villageId, other.components.citizen.villageId) && (person!.age < 18 || citizen.task !== 'fight'));
       if (!enemy) continue;
       const op = other.components.position!, d = distance(p!, op);
       if (d > 4) continue;
@@ -138,6 +147,7 @@ export function settlement(world: World): void {
   if (world.tick % (15 / SOCIAL_EVENT_RATE) !== 0) return;
   const residents = new Map<number, Entity[]>();
   const reserved = reservedBeds(world);
+  const lifted = liftedIds(world);
   const people = [...world.query('person', 'position', 'citizen')];
   for (const entity of people) {
     const person = entity.components.person!;
@@ -156,7 +166,7 @@ export function settlement(world: World): void {
   };
   for (const entity of people) {
     const person = entity.components.person!, citizen = entity.components.citizen!, position = entity.components.position!;
-    if (citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id)) continue;
+    if (person.madness || lifted.has(entity.id) || citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id)) continue;
     if (!world.terrain.isLand(position.x, position.y) || entity.components.thermal?.burning || endangered(world, position)) continue;
     if (person.homeId !== null) {
       const home = world.entities.get(person.homeId)!;
@@ -184,12 +194,12 @@ export function settlement(world: World): void {
   }
   for (const entity of people) {
     const person = entity.components.person!, citizen = entity.components.citizen!, village = villageOf(world, citizen.villageId);
-    if (citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id) || person.age < 18 || !village || person.homeId === null || entity.components.thermal?.burning
+    if (person.madness || lifted.has(entity.id) || citizen.task === 'migrate' || isEmergency(entity) || aboardFerry(world, entity.id) || person.age < 18 || !village || person.homeId === null || entity.components.thermal?.burning
       || !world.terrain.isLand(entity.components.position!.x, entity.components.position!.y)) continue;
     if (citizen.partnerId === null) {
       const partner = people.find(other => {
         const p = other.components.person!, c = other.components.citizen!;
-        return other.id !== entity.id && c.task !== 'migrate' && p.age >= 18 && p.sex !== person.sex && c.partnerId === null && c.villageId === village.id
+        return other.id !== entity.id && !p.madness && !lifted.has(other.id) && c.task !== 'migrate' && p.age >= 18 && p.sex !== person.sex && c.partnerId === null && c.villageId === village.id
           && raceOf(other) === raceOf(entity)
           && world.terrain.isLand(other.components.position!.x, other.components.position!.y)
           && !other.components.thermal?.burning && !citizen.parents.includes(other.id) && !c.parents.includes(entity.id)
@@ -203,7 +213,7 @@ export function settlement(world: World): void {
       }
     }
     const candidate = world.entities.get(citizen.partnerId ?? -1);
-    const partner = candidate && candidate.components.citizen?.task !== 'migrate' && world.terrain.isLand(candidate.components.position!.x, candidate.components.position!.y) ? candidate : undefined;
+    const partner = candidate && !candidate.components.person?.madness && !lifted.has(candidate.id) && candidate.components.citizen?.task !== 'migrate' && world.terrain.isLand(candidate.components.position!.x, candidate.components.position!.y) ? candidate : undefined;
     if (person.sex !== 'a' || !partner && citizen.pregnancy === 0) continue;
     let home = world.entities.get(person.homeId)!;
     let members = residents.get(home.id)!;
@@ -237,8 +247,9 @@ export function settlement(world: World): void {
 
 export function intentions(world: World): void {
   if (world.tick % 15 !== 0) return;
+  const lifted = liftedIds(world);
   const season = seasonAt(world.tick);
-  const people = [...world.query('person', 'citizen', 'position')];
+  const people = [...world.query('person', 'citizen', 'position')].filter(e => !lifted.has(e.id));
   const repairs = roadRepairs(world, people);
   const houses = [...world.query('dwelling', 'position')], fields = [...world.query('farm', 'position')];
   const assignments = new Map<number, number>();
@@ -253,13 +264,14 @@ export function intentions(world: World): void {
     c.attackIn = Math.max(0, c.attackIn - 0.5); c.reconsiderIn -= 0.5;
     if (c.hunger >= 90) world.events.push({ kind: 'damage', target: entity.id, amount: 0.75 });
     if (person.age >= stats.lifespan) { world.events.push({ kind: 'damage', target: entity.id, amount: entity.components.health!.current }); continue; }
+    if (madnessIntent(world, entity, lifted)) continue;
     if (isEmergency(entity) || c.task === 'migrate' || aboardFerry(world, entity.id) || waitingForFerry(world, entity)) continue;
-    if (continueSocializing(world, entity)) continue;
+    if (continueEquipping(world, entity) || continueSocializing(world, entity)) continue;
     if (continueAnimalCare(world, entity) || continueVillageWork(world, entity)) continue;
     if (continueConstruction(world, entity)) continue;
     if (continueRepair(world, entity, repairs)) continue;
     if (!world.terrain.isLand(position.x, position.y)) continue;
-    if (c.hunger < 30 && c.task !== 'fight' && entity.components.health && !entity.components.thermal?.burning) entity.components.health.current = Math.min(entity.components.health.max, entity.components.health.current + stats.recovery);
+    if (!person.plague && c.hunger < 30 && c.task !== 'fight' && entity.components.health && !entity.components.thermal?.burning) entity.components.health.current = Math.min(entity.components.health.max, entity.components.health.current + stats.recovery);
     const current = world.entities.get(c.targetId ?? -1);
     if (current && c.task === 'eat' && village && current.components.dwelling?.villageId === village.id && distance(position, current.components.position!) < 2.4 && village.food >= 1) {
       village.food--; c.hunger = Math.max(0, c.hunger - 45); c.reconsiderIn = 0;
@@ -267,7 +279,8 @@ export function intentions(world: World): void {
     }
     if (current && c.task === 'fight' && atWar(world, c.villageId, current.components.citizen?.villageId ?? current.components.dwelling?.villageId ?? null)
       && distance(position, current.components.position!) <= (current.components.dwelling ? 2.3 : 1.5) && c.attackIn <= 0 && !endangered(world, position)) {
-      world.events.push({ kind: 'damage', target: current.id, amount: current.components.dwelling ? stats.damage / 2 : stats.damage }); c.attackIn = stats.attackInterval;
+      const damage = stats.damage + weaponBonus(entity);
+      world.events.push({ kind: 'damage', target: current.id, amount: current.components.dwelling ? damage / 2 : damage }); c.attackIn = stats.attackInterval;
     }
     if (c.reconsiderIn > 0) continue;
     c.reconsiderIn = 2 + entity.id % 4 * 0.5;
@@ -286,7 +299,7 @@ export function intentions(world: World): void {
     }
     if (!target) {
       const formerField = c.task === 'farm' ? c.targetId : null;
-      if (assignSocializing(world, entity) || assignAnimalCare(world, entity) || assignConstruction(world, entity) || assignRepair(world, entity, repairs) || assignVillageWork(world, entity)) {
+      if (assignEquipment(world, entity) || assignSocializing(world, entity) || assignAnimalCare(world, entity) || assignConstruction(world, entity) || assignRepair(world, entity, repairs) || assignVillageWork(world, entity)) {
         if (formerField !== null) assignments.set(formerField, Math.max(0, (assignments.get(formerField) ?? 0) - 1));
         continue;
       }

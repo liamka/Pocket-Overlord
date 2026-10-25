@@ -38,8 +38,8 @@ export async function prepareRevision(root, currentVersion) {
   const changesets = (await readChangesets(root)).sort((a, b) => a.id.localeCompare(b.id));
   if (!changesets.length) return null;
   for (const { id, releases, summary } of changesets) {
-    if (!summary.trim() || releases.length !== 1 || releases[0].name !== 'pocket-world' || releases[0].type !== 'patch') {
-      throw new Error(`Changeset ${id} must have a nonempty summary and exactly one pocket-world patch release.`);
+    if (!summary.trim() || releases.length !== 1 || releases[0].name !== 'pocket-overlord' || releases[0].type !== 'patch') {
+      throw new Error(`Changeset ${id} must have a nonempty summary and exactly one pocket-overlord patch release.`);
     }
   }
   const version = String(BigInt(currentVersion) + BigInt(changesets.length));

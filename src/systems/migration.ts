@@ -1,5 +1,6 @@
 import { aboardFerry } from '../core/ferries';
 import type { World } from '../core/world';
+import { liftedIds } from '../core/cataclysms';
 import { ENTITY_LIMIT, SOCIAL_EVENT_RATE, type Entity, type Migration, type Vec2, type Village } from '../core/types';
 import { foodReserve, seasonAt } from '../core/seasons';
 import { assignHouse, atWar, buildHouse, fertilePatch, villageOf } from './society';
@@ -76,7 +77,7 @@ function depart(world: World, from: Village, members: Entity[], destination: Vec
 /** Homeless survivors reserve reachable shelter together, including orphaned children. */
 function shelterSurvivors(world: World): void {
   if (world.tick % 30 !== 0 || world.society.migrations.length >= 16) return;
-  const residents = [...world.query('person', 'citizen', 'position')].filter(e => e.components.person!.displaced && e.components.citizen!.task !== 'migrate');
+  const residents = [...world.query('person', 'citizen', 'position')].filter(e => !e.components.person!.madness && e.components.person!.displaced && e.components.citizen!.task !== 'migrate');
   const reserved = reservedBeds(world);
   for (const survivor of residents) {
     const from = villageOf(world, survivor.components.citizen!.villageId);
@@ -102,7 +103,7 @@ function plan(world: World): void {
   const villages = world.society.villages;
   if (world.tick % 150 !== 0 || !villages.length || world.society.migrations.length >= 16) return;
   const from = villages[Math.floor(world.tick / 150) % villages.length];
-  const residents = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === from.id && e.components.citizen!.task !== 'migrate');
+  const residents = [...world.query('person', 'citizen', 'position')].filter(e => !e.components.person!.madness && e.components.citizen!.villageId === from.id && e.components.citizen!.task !== 'migrate');
   const wantsToLeave = (e: Entity): boolean => e.components.person!.age >= 18 && e.components.citizen!.integration?.status === 'isolated'
     && world.tick >= e.components.citizen!.integration!.leaveAfter;
   if (world.tick < from.migrationAfter && !residents.some(wantsToLeave)) return;
@@ -191,9 +192,11 @@ function found(world: World, group: Migration): Entity[] | undefined {
 
 export function migrations(world: World): void {
   if (world.tick % 15 !== 0) return;
+  const lifted = liftedIds(world);
   let pathBudget = 1;
   for (const group of [...world.society.migrations]) {
     const members = group.members.map(id => world.entities.get(id)!).filter(Boolean);
+    if (members.some(e => lifted.has(e.id))) continue;
     const home = world.entities.get(group.homeIds[0]);
     if (!members.some(e => e.components.person!.age >= 18) && !members.every(e => e.components.person!.displaced) || world.tick - group.started > 3600
       || group.toId !== null && (!home?.components.dwelling || home.components.thermal?.burning || atWar(world, group.fromId, group.toId)

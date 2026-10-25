@@ -27,7 +27,7 @@ if (command === 'git') {
     case 'status': output(config.dirty || state.dirty ? ' M src/main.ts' : ''); break;
     case 'branch': output(config.detached ? '' : 'main'); break;
     case 'rev-parse': output(state.head); break;
-    case 'remote': output('https://github.com/example/pocket-world.git'); break;
+    case 'remote': output('https://github.com/example/pocket-overlord.git'); break;
     case 'ls-remote': if (config.tagConflict) output('c'.repeat(40) + '\\trefs/tags/' + tag); break;
     case 'diff': output(state.dirty ? 'src/main.ts\\0' : 'package.json\\0package-lock.json\\0CHANGELOG.md\\0'); break;
     case 'ls-files': output(config.newFile ? 'new-file.txt' : ''); break;
@@ -56,7 +56,7 @@ if (command === 'git') {
   else if (args[1] === 'build') {
     if (config.buildFailure) fail();
     fs.mkdirSync('dist', {recursive: true});
-    fs.writeFileSync('dist/index.html', '<title>Pocket World</title>' + tag);
+    fs.writeFileSync('dist/index.html', '<title>Pocket Overlord</title>' + tag);
     fs.writeFileSync('dist/game.js', 'console.log("built");');
     if (config.headChanged) {state.head = 'c'.repeat(40); save();}
     if (config.unexpectedChange) {state.dirty = true; save();}
@@ -73,7 +73,7 @@ if (command === 'git') {
 `;
 
 function fixture(scenario: Record<string, boolean> = {}, version = '234') {
-  const directory = mkdtempSync(join(tmpdir(), 'pocket-world-release-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pocket-overlord-release-'));
   directories.push(directory);
   mkdirSync(join(directory, 'scripts'));
   mkdirSync(join(directory, 'bin'));
@@ -93,13 +93,13 @@ function fixture(scenario: Record<string, boolean> = {}, version = '234') {
   const previous = /^[1-9]\d*$/.test(version) ? String(BigInt(version) - 1n) : '0';
   writeFileSync(join(directory, 'state.json'), JSON.stringify({ head: originalHead, previousPublished: previous }));
   writeFileSync(join(directory, 'commands.jsonl'), '');
-  writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: 'pocket-world', version }));
+  writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: 'pocket-overlord', version }));
   writeFileSync(join(directory, 'package-lock.json'), JSON.stringify({ version, packages: { '': { version: scenario.versionMismatch ? '233' : version } } }));
   writeFileSync(join(directory, 'CHANGELOG.md'), `# Changelog\n\n- [#${version}] Current change.\n${previous === '0' ? '' : `- [#${previous}] Older change.\n`}`);
   return {
     directory,
     addChangeset: (name: string, summary: string) => {
-      writeFileSync(join(directory, '.changeset', `${name}.md`), `---\n"pocket-world": patch\n---\n\n${summary}\n`);
+      writeFileSync(join(directory, '.changeset', `${name}.md`), `---\n"pocket-overlord": patch\n---\n\n${summary}\n`);
       const state = JSON.parse(readFileSync(join(directory, 'state.json'), 'utf8'));
       state.previousPublished = version;
       writeFileSync(join(directory, 'state.json'), JSON.stringify(state));
@@ -203,7 +203,7 @@ describe('make release', () => {
     expect(test.commands().filter(command => command[0] === 'git' && command[1] === 'commit')).toHaveLength(1);
   });
 
-  it.each(['---\n---\nEmpty release.', '---\n"other-package": patch\n---\nWrong package.', '---\n"pocket-world": minor\n---\nWrong bump.', '---\n"pocket-world": patch\n---\n', '---\n"pocket-world": patch\n---\n### Unknown\n- Wrong heading.'])('rejects unsupported changesets without losing records', record => {
+  it.each(['---\n---\nEmpty release.', '---\n"other-package": patch\n---\nWrong package.', '---\n"pocket-overlord": minor\n---\nWrong bump.', '---\n"pocket-overlord": patch\n---\n', '---\n"pocket-overlord": patch\n---\n### Unknown\n- Wrong heading.'])('rejects unsupported changesets without losing records', record => {
     const test = fixture();
     writeFileSync(join(test.directory, '.changeset/invalid.md'), record);
     expect(test.run().status).not.toBe(0);
@@ -234,9 +234,9 @@ describe('make release', () => {
     expect(push).toBeGreaterThan(commands.findIndex(command => command.join(' ') === 'npm run build'));
     expect(create).toBeGreaterThan(push);
     expect(commands[push]).toEqual(['git', 'push', 'origin', 'HEAD:refs/heads/main']);
-    expect(commands[create]).toEqual(expect.arrayContaining(['v234', '--target', originalHead, '--repo', 'example/pocket-world', '--notes-file']));
+    expect(commands[create]).toEqual(expect.arrayContaining(['v234', '--target', originalHead, '--repo', 'example/pocket-overlord', '--notes-file']));
     const directory = join(test.directory, 'releases/v234');
-    const name = 'PocketWorld-234-web.zip';
+    const name = 'PocketOverlord-234-web.zip';
     const archive = readFileSync(join(directory, name));
     expect(readFileSync(join(directory, 'SHA256SUMS'), 'utf8')).toBe(`${createHash('sha256').update(archive).digest('hex')}  ${name}\n`);
     const contents = spawnSync('unzip', ['-Z', '-1', join(directory, name)], { encoding: 'utf8' });
@@ -285,7 +285,7 @@ describe('make release', () => {
   it.each(['1', '9', '10', '9007199254740993'])('packages integer revision %s without adding version components', version => {
     const test = fixture({}, version);
     expect(test.run('dist').status).toBe(0);
-    expect(readFileSync(join(test.directory, `releases/v${version}/SHA256SUMS`), 'utf8')).toContain(`PocketWorld-${version}-web.zip`);
+    expect(readFileSync(join(test.directory, `releases/v${version}/SHA256SUMS`), 'utf8')).toContain(`PocketOverlord-${version}-web.zip`);
   });
 
   it.each(['0', '01', '-1', '1.234', '1.2.3', '234-beta', 'v234'])('rejects unsupported version %s before publishing', version => {
@@ -340,7 +340,7 @@ describe('make release', () => {
     expect(test.run('dist').status).toBe(0);
     rmSync(join(test.directory, 'dist/removed.txt'));
     expect(test.run('dist').status).toBe(0);
-    const listing = spawnSync('unzip', ['-Z', '-1', join(test.directory, 'releases/v234/PocketWorld-234-web.zip')], { encoding: 'utf8' });
+    const listing = spawnSync('unzip', ['-Z', '-1', join(test.directory, 'releases/v234/PocketOverlord-234-web.zip')], { encoding: 'utf8' });
     expect(listing.stdout).not.toContain('removed.txt');
     expect(test.commands().some(command => ['git', 'gh'].includes(command[0]))).toBe(false);
   });

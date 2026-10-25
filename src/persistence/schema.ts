@@ -164,6 +164,14 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
   [29, save => ({ ...save, version: 30 })],
   // Existing residents keep their lives; integration starts with the next arrival.
   [30, save => ({ ...save, version: 31 })],
+  [31, save => {
+    if (record(save.society) && Array.isArray(save.society.villages)) for (const village of save.society.villages) {
+      if (record(village) && record(village.economy) && record(village.economy.stocks)) {
+        village.economy.stocks.stone = 0; village.economy.stocks.stoneAxes = 0;
+      }
+    }
+    return { ...save, version: 32 };
+  }],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {

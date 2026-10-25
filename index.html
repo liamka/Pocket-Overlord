@@ -7,52 +7,118 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="%BASE_URL%fonts/ark-pixel-10px-proportional-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="%BASE_URL%fonts/ark-pixel-10.css" />
-    <meta name="description" content="Pocket World is a pixel sandbox. Populate an island, build settlements and shape the world with seven tools." />
+    <meta name="description" content="Pocket Overlord is a pixel sandbox. Populate an island, build settlements and shape the world with seven tools." />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pocket World" />
-    <meta property="og:title" content="Pocket World — pixel sandbox" />
-    <meta property="og:description" content="Pocket World is a pixel sandbox. Populate an island, build settlements and shape the world with seven tools." />
+    <meta property="og:site_name" content="Pocket Overlord" />
+    <meta property="og:title" content="Pocket Overlord — pixel sandbox" />
+    <meta property="og:description" content="Pocket Overlord is a pixel sandbox. Populate an island, build settlements and shape the world with seven tools." />
     <!-- Set og:url and an absolute og:image URL when the public domain is chosen. -->
     <meta property="og:image" content="%BASE_URL%og-image.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="A pixel globe with two green islands above the words Pocket World and pixel sandbox on a blue background." />
-    <title>Pocket World — pixel sandbox</title>
+    <meta property="og:image:alt" content="A pixel globe with two green islands above the words Pocket Overlord and pixel sandbox on a blue background." />
+    <title>Pocket Overlord — pixel sandbox</title>
     <!-- Keep the loading screen visible before the game bundle and fonts arrive. -->
     <style>
-      .loading-screen { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 24px; background: #234f62; color: #e8e9d8; font: 500 18px/1.5 'Ark Pixel 10', 'Courier New', monospace; text-align: center; cursor: wait; }
+      .loading-screen { position: fixed; z-index: 20; inset: 0; overflow: hidden; background: #205967; color: #ecedc4; font: 400 18px/1.5 'Ark Pixel 10', 'Courier New', monospace; text-align: center; cursor: wait; }
       .loading-screen[hidden], .loading-screen [hidden] { display: none !important; }
-      .loading-screen[data-mode="create"] { background: #0b1b22cc; }
-      .loading-card { box-sizing: border-box; width: min(340px, 100%); padding: 30px 24px; background: #3e4939; border: 3px solid #8b8963; box-shadow: 0 0 0 3px #222e25, inset 3px 3px #69735a, inset -3px -3px #293629, 7px 9px #15271b70; }
-      .loading-card img { display: block; width: 64px; height: 64px; margin: 0 auto 16px; image-rendering: pixelated; }
-      .loading-title { display: block; color: #f1d58b; font-size: 26px; text-shadow: 2px 2px #253224; }
-      .loading-message { margin: 12px 0 8px; font-family: Menlo, Consolas, 'Liberation Mono', monospace; }
-      .loading-progress { margin: 0 0 16px; color: #f1d58b; font-size: 24px; font-variant-numeric: tabular-nums; }
-      .loading-indicator { display: flex; justify-content: center; gap: 8px; }
-      .loading-indicator span { width: 8px; height: 8px; background: #f1d58b; animation: loading-pulse 1s steps(2, end) infinite; }
-      .loading-indicator span:nth-child(2) { animation-delay: .15s; }
-      .loading-indicator span:nth-child(3) { animation-delay: .3s; }
-      .loading-retry { padding: 8px 14px; border: 2px solid #8b8963; background: #26342a; color: #f1d58b; font: inherit; cursor: pointer; }
-      .loading-retry:focus-visible { outline: 3px solid #ffe68b; outline-offset: 3px; }
+      .loading-title { position: absolute; top: 13%; left: 0; width: 100%; font-size: clamp(24px, 5.1vw, 56px); line-height: 1.1; font-weight: 400; }
+      .loading-island { position: absolute; top: 29%; left: 50%; transform: translateX(-50%); width: min(75vw, 730px); height: 46%; object-fit: contain; image-rendering: pixelated; }
+      .loading-status { position: absolute; top: 79%; left: 24px; right: 24px; font-size: clamp(10px, 2.2vw, 20px); }
+      .loading-message { margin: 0; opacity: .76; }
+      .loading-progress { margin-top: 12px; color: #cce99a; font-size: clamp(13px, 2.5vw, 25px); font-variant-numeric: tabular-nums; }
+      .loading-retry { margin-top: 16px; padding: 8px 16px; border: 1px solid #8fbda9; border-radius: 4px; background: #286b72; color: #ecedc4; font: inherit; cursor: pointer; }
+      .loading-retry:hover { background: #337b7f; }
+      .loading-retry:focus-visible { outline: 3px solid #cce99a; outline-offset: 4px; }
       .loading-screen[data-failed] { cursor: default; }
-      .loading-screen[data-failed] .loading-indicator, .loading-screen[data-failed] .loading-progress { display: none; }
-      @keyframes loading-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-      @media (prefers-reduced-motion: reduce) { .loading-indicator span { animation: none; } }
+      .loading-screen[data-failed] .loading-progress { display: none; }
+      .loading-screen[data-failed] .loading-status { top: auto; bottom: max(24px, env(safe-area-inset-bottom)); }
+      @media (max-aspect-ratio: 4/5) { .loading-title { font-size: 9vw; } .loading-island { width: 100%; } .loading-status { font-size: 3.5vw; } .loading-progress { font-size: 4.5vw; } }
     </style>
   </head>
   <body>
     <div id="app" inert aria-busy="true"></div>
     <div id="loading-screen" class="loading-screen">
-      <div class="loading-card">
-        <img src="%BASE_URL%favicon.svg" width="64" height="64" alt="" />
-        <strong class="loading-title" translate="no">Pocket World</strong>
+      <strong class="loading-title" translate="no">Pocket Overlord</strong>
+      <canvas id="loading-island" class="loading-island" width="384" height="216" aria-hidden="true"></canvas>
+      <div class="loading-status">
         <p id="loading-message" class="loading-message" role="status" aria-live="polite" aria-atomic="true">Loading world…</p>
         <div id="loading-progress" class="loading-progress" role="progressbar" aria-labelledby="loading-message" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">0%</div>
-        <div class="loading-indicator" aria-hidden="true"><span></span><span></span><span></span></div>
         <button id="loading-retry" class="loading-retry" type="button" hidden>Try again</button>
       </div>
     </div>
+    <!-- Render before the game module arrives; the existing progress and visibility own the scene. -->
+    <script>
+      (() => {
+        const screen = document.getElementById('loading-screen');
+        const progress = document.getElementById('loading-progress');
+        const canvas = document.getElementById('loading-island');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.imageSmoothingEnabled = false;
+        const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+        const random = (x, y = 0) => { const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return n - Math.floor(n); };
+        const rect = (x, y, width, height, color) => { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), width, height); };
+        const radius = (x, y) => ((x - 192) / 112) ** 2 + ((y - 116) / 58) ** 2 + Math.sin(x * .07) * .12 + Math.cos(y * .13) * .09;
+        const tiles = [];
+        for (let y = 48; y < 184; y += 4) for (let x = 64; x < 324; x += 4) {
+          const r = radius(x, y);
+          if (r <= 1.13) tiles.push({ x, y, r, threshold: .05 + (x - 64) / 260 * .56 + random(x, y) * .1, grass: ['#87ac60', '#82a75c', '#95b767'][Math.floor(random(x, y) * 3)] });
+        }
+        const waves = Array.from({ length: 48 }, (_, i) => ({ x: random(i, 4) * 384, y: random(i, 9) * 216, width: 2 + Math.floor(random(i, 3) * 7) }));
+        const trees = Array.from({ length: 20 }, (_, i) => ({ x: 106 + random(i, 12) * 164, y: 82 + random(i, 15) * 70, scale: .65 + random(i, 6) * .3, threshold: .35 + i * .018 })).filter(tree => radius(tree.x, tree.y) < .57);
+        function tree({ x, y, scale }) {
+          ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(scale, scale);
+          rect(-1, -7, 3, 8, '#796444');
+          rect(-7, -12, 14, 5, '#497c49'); rect(-5, -17, 10, 6, '#497c49'); rect(-3, -21, 6, 6, '#497c49');
+          rect(-4, -16, 3, 6, '#74a252'); rect(-1, -20, 2, 5, '#74a252');
+          ctx.restore();
+        }
+        function house() {
+          ctx.save(); ctx.translate(217, 128); ctx.scale(1.1, 1.1);
+          rect(-10, -13, 20, 14, '#eddbb2'); rect(5, -13, 5, 14, '#c3aa82');
+          ctx.fillStyle = '#b46d50'; ctx.beginPath(); ctx.moveTo(-13, -13); ctx.lineTo(0, -24); ctx.lineTo(13, -13); ctx.closePath(); ctx.fill();
+          rect(-3, -23, 3, 3, '#d99268'); rect(6, -25, 3, 8, '#80604d');
+          rect(-2, -7, 4, 8, '#806348'); rect(-7, -9, 4, 4, '#668887'); rect(4, -9, 3, 4, '#668887');
+          ctx.restore();
+        }
+        function draw(time) {
+          const p = Math.max(0, Math.min(1, Number(progress.getAttribute('aria-valuenow')) / 100));
+          ctx.clearRect(0, 0, 384, 216);
+          waves.forEach((wave, i) => rect(wave.x + Math.floor(Math.sin(time / 1600 + i) * 2), wave.y, wave.width, 1, '#3c7480'));
+          for (const { x, y, r, threshold, grass } of tiles) {
+            const color = r > 1 ? '#478d8c' : p < threshold ? '#367784' : r > .78 ? '#d9cd8d' : p < threshold + .1 ? '#c4bc80' : grass;
+            rect(x, y, 4, 4, color);
+          }
+          for (const plant of trees) if (p > plant.threshold) tree(plant);
+          if (p > .72) house();
+          if (p > .88) { rect(207, 139, 4, 16, '#c9b77a'); rect(193, 151, 14, 4, '#c9b77a'); }
+          if (p > .9) { rect(188, 146, 3, 3, '#ebc694'); rect(188, 149, 3, 4, '#ad584e'); }
+        }
+        let frameId = 0, lastPaint = 0;
+        const animating = () => !screen.hidden && !document.hidden && !screen.hasAttribute('data-failed') && !reducedMotion.matches;
+        function frame(time) {
+          frameId = 0;
+          if (!animating()) return;
+          if (time - lastPaint >= 80) { draw(time); lastPaint = time; }
+          frameId = requestAnimationFrame(frame);
+        }
+        function sync() {
+          cancelAnimationFrame(frameId); frameId = 0;
+          if (screen.hidden || document.hidden) return;
+          lastPaint = performance.now();
+          draw(animating() ? lastPaint : 0);
+          if (animating()) frameId = requestAnimationFrame(frame);
+        }
+        const observer = new MutationObserver(sync);
+        observer.observe(screen, { attributes: true, attributeFilter: ['hidden', 'data-failed'] });
+        observer.observe(progress, { attributes: true, attributeFilter: ['aria-valuenow'] });
+        reducedMotion.addEventListener('change', sync);
+        document.addEventListener('visibilitychange', sync);
+        sync();
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

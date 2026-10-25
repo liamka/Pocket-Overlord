@@ -25,8 +25,8 @@ const git = (...args) => run('git', args, { capture: true });
 function version() {
   const pkg = readJson('package.json');
   const lock = readJson('package-lock.json');
-  if (pkg.name !== 'pocket-world' || typeof pkg.version !== 'string' || !/^[1-9]\d*$/.test(pkg.version)) {
-    throw new Error('Expected a pocket-world version as a positive integer string, without leading zeros.');
+  if (pkg.name !== 'pocket-overlord' || typeof pkg.version !== 'string' || !/^[1-9]\d*$/.test(pkg.version)) {
+    throw new Error('Expected a pocket-overlord version as a positive integer string, without leading zeros.');
   }
   if (lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version) {
     throw new Error('package.json and package-lock.json versions differ. Restore consistent package metadata before releasing.');
@@ -62,7 +62,7 @@ function packageBuild(currentVersion, notes) {
   if (!existsSync('dist/index.html')) throw new Error('The build did not produce dist/index.html.');
   const directory = resolve('releases', `v${currentVersion}`);
   mkdirSync(directory, { recursive: true });
-  const name = `PocketWorld-${currentVersion}-web.zip`;
+  const name = `PocketOverlord-${currentVersion}-web.zip`;
   const archive = join(directory, name);
   // Recreate the ZIP so removed files cannot survive from a previous build.
   rmSync(archive, { force: true });
@@ -172,7 +172,7 @@ async function main() {
     run('gh', ['release', 'edit', tag, '--repo', repo, '--notes-file', notesFile, '--draft=false', '--latest']);
   } else {
     run('gh', ['release', 'create', tag, archive, checksum, '--repo', repo, '--target', head,
-      '--title', `Pocket World ${tag}`, '--notes-file', notesFile, '--latest']);
+      '--title', `Pocket Overlord ${tag}`, '--notes-file', notesFile, '--latest']);
   }
   console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);
 }

@@ -24,6 +24,7 @@ export interface InputHost {
   select(id: string): void;
   tools(): Iterable<ToolDefinition>;
   dispatch(command: GameCommand): void;
+  beginAction?(): void;
   togglePause(): void;
   dimensions(): Vec2;
   blocked(): boolean;
@@ -177,6 +178,11 @@ export class InputController {
     this.point = undefined; this.renderer.cursor = undefined;
     for (const id of ids) if (this.renderer.canvas.hasPointerCapture(id)) this.renderer.canvas.releasePointerCapture(id);
   }
+  reset(): void {
+    this.cancel();
+    this.lastAim = undefined; this.lastRain = -Infinity;
+    this.lastControl = ''; this.controlledTool = undefined;
+  }
   private release(releaseCapture = true): void {
     const gesture = this.gesture;
     this.gesture = undefined; this.panning = false;
@@ -243,6 +249,8 @@ export class InputController {
   }
   private apply(): void {
     if (!this.renderer.cursor || this.host.blocked()) return;
+    if (!this.gesture?.applied) this.host.beginAction?.();
+    if (this.gesture) this.gesture.applied = true;
     const camera = this.renderer.camera;
     const topLeft = camera.screenToWorld(0, 0), bottomRight = camera.screenToWorld(camera.width, camera.height);
     this.host.dispatch({ kind: 'use-tool', toolId: this.host.tool().id, ...this.renderer.cursor,

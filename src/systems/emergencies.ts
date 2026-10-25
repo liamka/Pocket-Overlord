@@ -1,6 +1,8 @@
 import { aboardFerry } from '../core/ferries';
 import type { Emergency, Entity, Vec2 } from '../core/types';
 import type { World } from '../core/world';
+import { liftedIds } from '../core/cataclysms';
+import { hazardAreas } from '../core/geohazards';
 import { applyEvent } from './effects';
 import { findPath } from './navigation';
 import { atWar } from './society';
@@ -11,7 +13,7 @@ export const emergencyReach = (kind: Emergency['kind']): number => kind === 'ext
 export const isEmergency = (entity: Entity): boolean => !!entity.components.citizen?.emergency;
 
 export function unsafe(world: World, p: Vec2, radius = 6): boolean {
-  return world.nearby(p, radius + 4).some(e => {
+  return hazardAreas(world).some(area => distance(p, area) < area.radius + 2) || world.nearby(p, radius + 4).some(e => {
     const hazard = e.components.explosive;
     return (hazard || e.components.thermal?.burning) && distance(p, e.components.position!) < (hazard ? hazard.radius + 2 : radius);
   });
@@ -37,8 +39,10 @@ function responsePath(world: World, start: Vec2, end: Vec2, reach: number, safe:
 
 /** Emergency paths override ordinary jobs without losing a family's migration membership. */
 export function emergencies(world: World, dt: number): void {
+  const lifted = liftedIds(world);
+  const areas = hazardAreas(world);
   const hazards = [...world.query('position')].filter(e => e.components.explosive || e.components.thermal?.burning);
-  const people = [...world.query('person', 'citizen', 'position', 'health')];
+  const people = [...world.query('person', 'citizen', 'position', 'health')].filter(e => !lifted.has(e.id));
   const assigned = new Map<number, number>();
   for (const e of people) {
     const id = e.components.citizen!.emergency?.targetId;
@@ -47,12 +51,15 @@ export function emergencies(world: World, dt: number): void {
   for (const entity of people) {
     const { person, citizen, position, health, thermal } = entity.components;
     const c = citizen!, p = position!;
+    if (person!.madness) { if (c.emergency) stop(entity); continue; }
     if (aboardFerry(world, entity.id) || !world.terrain.isLand(p.x, p.y)) { stop(entity); continue; }
     const local = hazards.filter(e => e.id !== entity.id && distance(p, e.components.position!) < (e.components.explosive?.radius ?? 7) + 5);
+    const pools = areas.filter(area => distance(p, area) < area.radius + 12);
     const risk = (q: Vec2, fireRadius = 3.3): number => local.reduce((sum, e) => sum
-      + Math.max(0, (e.components.explosive ? e.components.explosive.radius + 2 : fireRadius) - distance(q, e.components.position!)), 0);
+      + Math.max(0, (e.components.explosive ? e.components.explosive.radius + 2 : fireRadius) - distance(q, e.components.position!)), 0)
+      + pools.reduce((sum, area) => sum + Math.max(0, area.radius + 1.5 - distance(q, area)), 0);
     const threatened = !!thermal?.burning || risk(p, 7) > 0;
-    const capable = person!.age >= 18 && health!.current >= health!.max * 0.65 && c.hunger < 80 && !thermal?.burning;
+    const capable = !person!.plague && person!.age >= 18 && health!.current >= health!.max * 0.65 && c.hunger < 80 && !thermal?.burning;
     const mustFlee = !!thermal?.burning || risk(p) > 0 || threatened && !capable;
     let state = c.emergency;
     if (state) state.reconsiderIn -= dt;
@@ -63,8 +70,8 @@ export function emergencies(world: World, dt: number): void {
     if (state?.kind === 'flee') {
       if (!threatened) { stop(entity); continue; }
       if (state.reconsiderIn <= 0) {
-        const closest = local.sort((a, b) => distance(p, a.components.position!) - distance(p, b.components.position!))[0];
-        const away = closest ? Math.atan2(p.y - closest.components.position!.y, p.x - closest.components.position!.x) : entity.components.motion!.heading;
+        const closest = [...local.map(e => e.components.position!), ...pools].sort((a, b) => distance(p, a) - distance(p, b))[0];
+        const away = closest ? Math.atan2(p.y - closest.y, p.x - closest.x) : entity.components.motion!.heading;
         const points: Vec2[] = [];
         for (const radius of [6, 10]) for (const offset of [0, -Math.PI / 4, Math.PI / 4, -Math.PI / 2, Math.PI / 2, Math.PI]) {
           const q = { x: p.x + Math.cos(away + offset) * radius, y: p.y + Math.sin(away + offset) * radius };
@@ -83,7 +90,8 @@ export function emergencies(world: World, dt: number): void {
       const target = world.entities.get(state.targetId!), q = target?.components.position;
       const valid = capable && target && q && !atWar(world, c.villageId, owner(target))
         && (state.kind === 'extinguish' ? target.components.thermal?.burning && !target.components.explosive
-          : target.components.person && target.components.health!.current < target.components.health!.max * 0.85 && !target.components.thermal?.burning);
+          : target.components.person && !target.components.person.plague && !target.components.person.madness
+            && target.components.health!.current < target.components.health!.max * 0.85 && !target.components.thermal?.burning);
       if (!valid || distance(p, q!) > 16) {
         assigned.set(state.targetId!, Math.max(0, (assigned.get(state.targetId!) ?? 1) - 1));
         stop(entity); state = undefined;
@@ -106,7 +114,8 @@ export function emergencies(world: World, dt: number): void {
     if (capable && c.task !== 'migrate') {
       const fires = local.filter(e => e.components.thermal?.burning && !e.components.explosive && !atWar(world, c.villageId, owner(e))
         && (assigned.get(e.id) ?? 0) < 2 && distance(p, e.components.position!) <= 12);
-      const wounded = people.filter(e => e.id !== entity.id && !e.components.thermal?.burning && !atWar(world, c.villageId, owner(e))
+      const wounded = people.filter(e => e.id !== entity.id && !e.components.person!.plague && !e.components.person!.madness
+        && !e.components.thermal?.burning && !atWar(world, c.villageId, owner(e))
         && e.components.health!.current < e.components.health!.max * 0.6 && !(assigned.get(e.id) ?? 0) && distance(p, e.components.position!) <= 10);
       fires.sort((a, b) => Number(!!b.components.person) - Number(!!a.components.person) || distance(p, a.components.position!) - distance(p, b.components.position!));
       wounded.sort((a, b) => distance(p, a.components.position!) - distance(p, b.components.position!));

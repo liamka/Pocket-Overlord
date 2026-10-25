@@ -1,6 +1,6 @@
 import type { Entity, Vec2, Village } from './types';
 
-export const GOODS = ['grain', 'flour', 'bread', 'wood', 'tools'] as const;
+export const GOODS = ['grain', 'flour', 'bread', 'wood', 'tools', 'stone', 'stoneAxes'] as const;
 export type Good = typeof GOODS[number];
 export type WorkplaceKind = 'market' | 'mill' | 'bakery' | 'workshop';
 export interface VillageEconomy {
@@ -43,7 +43,7 @@ export interface Animal {
 export interface Workplace { kind: WorkplaceKind; villageId: number | null }
 
 export function economyOf(village: Village): VillageEconomy {
-  return village.economy ??= { stocks: { grain: 0, flour: 0, bread: 0, wood: 0, tools: 0 }, deliveries: 0, buildAfter: village.founded + 900 };
+  return village.economy ??= { stocks: { grain: 0, flour: 0, bread: 0, wood: 0, tools: 0, stone: 0, stoneAxes: 0 }, deliveries: 0, buildAfter: village.founded + 900 };
 }
 export function governmentOf(village: Village): VillageGovernment {
   return village.government ??= { leaderId: null, trust: 60, electedAt: 0, electionAt: 0, lastHarvest: village.harvested, elections: 0 };

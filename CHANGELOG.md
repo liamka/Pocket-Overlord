@@ -122,10 +122,10 @@
 - [#179] Let Tsar Bomba destroy coastal land and permanently flood craters connected to water
 - [#178] Add six large-catalog panel concepts with 432 demo items, search, favorites and quick access.
 - [#177] Add a Yin and Yang world with contrasting terrain, an S-shaped channel and opposite island eyes
-- [#176] Add the existing Pocket World cover and illustrated section headings to the README.
+- [#176] Add the existing Pocket Overlord cover and illustrated section headings to the README.
 - [#175] Skip the test suite during make release while retaining the required build and local packaging checks.
 - [#174] Enable a localized biome picker for new worlds in debug mode with changelog=1
 - [#173] Add natural biomes with climate regions, seed brushes, distinct vegetation and soil effects
-- [#172] Move the world statistics panel to the upper-left corner. Remove the in-game Pocket World banner and island subtitle.
+- [#172] Move the world statistics panel to the upper-left corner. Remove the in-game Pocket Overlord banner and island subtitle.
 - [#171] Maintain a dated changelog with categorized entries for each completed revision.
 - [#170] Fixes
