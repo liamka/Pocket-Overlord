@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { BIOME_SURFACES, NATURAL_BIOMES, NaturalBiome } from '../src/core/natural-biomes';
+import { BIOME_SURFACES, NATURAL_BIOMES, SEED_BIOMES, NaturalBiome } from '../src/core/natural-biomes';
 import { BIOMES } from '../src/core/biomes';
 import { generateTerrain } from '../src/core/terrain';
 import { World } from '../src/core/world';
@@ -70,7 +70,7 @@ describe('natural biomes', () => {
 
   it('keeps ice and stone barren and maps painted surfaces to the new biome', () => {
     const world = biomeWorld(), map = world.terrain;
-    for (const biome of NATURAL_BIOMES) {
+    for (const biome of SEED_BIOMES) {
       for (let surface = 1; surface <= 3; surface++) {
         map.surfaces.fill(surface);
         world.command({ kind: 'use-tool', toolId: `core:biome-${biome.key}`, x: 20, y: 20 });
@@ -81,7 +81,7 @@ describe('natural biomes', () => {
     }
   });
 
-  it.each(NATURAL_BIOMES)('plants $key while paused without changing water, beaches, mountains, roads or buildings', biome => {
+  it.each(SEED_BIOMES)('plants $key while paused without changing water, beaches, mountains, roads or buildings', biome => {
     const world = biomeWorld(), map = world.terrain;
     const surfaces = [Terrain.Water, Terrain.DeepWater, Terrain.Sand, Terrain.Mountain, Terrain.BridgeHorizontal, Terrain.Road];
     surfaces.forEach((tile, i) => map.set(17 + i, 20, tile));
@@ -129,6 +129,10 @@ describe('natural biomes', () => {
     expect(travel(NaturalBiome.Swamp) / normal).toBeCloseTo(0.6);
     expect(travel(NaturalBiome.Permafrost) / normal).toBeCloseTo(0.75);
     expect(travel(NaturalBiome.Desert) / normal).toBeCloseTo(0.8);
+    expect(travel(NaturalBiome.Enchanted) / normal).toBeCloseTo(1);
+    expect(travel(NaturalBiome.Corrupted) / normal).toBeCloseTo(0.7);
+    expect(travel(NaturalBiome.Crystal) / normal).toBeCloseTo(0.85);
+    expect(travel(NaturalBiome.Candy) / normal).toBeCloseTo(0.9);
     expect(travel(NaturalBiome.Swamp, true) / normal).toBeCloseTo(1.4);
   });
 
@@ -144,13 +148,18 @@ describe('natural biomes', () => {
     expect(growth(NaturalBiome.Jungle, 30)).toBeGreaterThan(meadow);
     expect(growth(NaturalBiome.Desert, 30)).toBeLessThan(meadow);
     expect(growth(NaturalBiome.Permafrost, 30)).toBeGreaterThan(0);
+    expect(growth(NaturalBiome.Enchanted, 30)).toBeGreaterThan(meadow);
+    expect(growth(NaturalBiome.Mushroom, 30)).toBeGreaterThan(meadow);
+    expect(growth(NaturalBiome.Lemon, 30)).toBeGreaterThan(meadow);
+    expect(growth(NaturalBiome.Corrupted, 30)).toBeLessThan(meadow);
+    expect(growth(NaturalBiome.Infernal, 30)).toBeLessThan(growth(NaturalBiome.Corrupted, 30));
     for (const biome of NATURAL_BIOMES) expect(growth(biome.id, 5400)).toBe(0);
   });
 
   it('retains the biome underneath craters and roads during recovery and save/load', () => {
     const world = biomeWorld(), map = world.terrain;
     for (const biome of NATURAL_BIOMES) {
-      const x = 10 + biome.id * 4;
+      const x = 10 + biome.id * 2;
       map.surfaces[map.index(x, 20)] = 1 + biome.id % 3;
       map.surfaces[map.index(x, 25)] = 1 + biome.id % 3;
       map.setBiome(x, 20, biome.id); map.set(x, 20, Terrain.Crater);
@@ -161,7 +170,7 @@ describe('natural biomes', () => {
     expect(restored.snapshot()).toEqual(snapshot);
     for (let step = 1; step <= 120; step++) { restored.tick = step * 120; landscape(restored); }
     for (const biome of NATURAL_BIOMES) {
-      const x = 10 + biome.id * 4;
+      const x = 10 + biome.id * 2;
       expect(restored.terrain.at(x, 20)).toBe(Terrain.Grass);
       expect(restored.terrain.biomeAt(x, 20).id).toBe(biome.id);
       expect(restored.terrain.biomeAt(x, 25).id).toBe(biome.id);
@@ -182,7 +191,7 @@ describe('natural biomes', () => {
 
   it('rejects missing, truncated, sparse and unknown biome values in current saves', () => {
     const world = biomeWorld();
-    for (const biomes of [undefined, [], Array(48 * 48), Array(48 * 48).fill(6), Array(48 * 48).fill(-1), Array(48 * 48).fill(1.5)]) {
+    for (const biomes of [undefined, [], Array(48 * 48), Array(48 * 48).fill(NATURAL_BIOMES.length), Array(48 * 48).fill(-1), Array(48 * 48).fill(1.5)]) {
       const save = world.snapshot(); save.terrain.biomes = biomes;
       expect(() => decodeSave(save, world.registry)).toThrow();
     }

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { NATURAL_BIOMES, NaturalBiome } from '../../src/core/natural-biomes';
+import { NATURAL_BIOMES, SEED_BIOMES, NaturalBiome } from '../../src/core/natural-biomes';
 import { World } from '../../src/core/world';
 import { Terrain, type WorldSnapshot } from '../../src/core/types';
 import { Camera } from '../../src/render/camera';
@@ -39,37 +39,40 @@ async function savedWorld(page: Page): Promise<WorldSnapshot> {
   return JSON.parse(serialized);
 }
 
-test('seed brushes paint with left-drag, preserve the camera, save and reload, and keep right-drag for panning', async ({ page }) => {
+for (const [first, second] of [[NaturalBiome.Swamp, NaturalBiome.Desert], [NaturalBiome.Enchanted, NaturalBiome.Corrupted]]) {
+test(`${NATURAL_BIOMES[first].key} brushes paint with left-drag, preserve the camera, save and reload, and keep right-drag for panning`, async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const world = flatWorld(); world.paused = true;
   await installWorld(page, world.snapshot());
   await page.locator('[data-category="biomes"]').click();
-  for (const biome of NATURAL_BIOMES) await expect(page.getByRole('button', { name: biome.label, exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Swamp seeds', exact: true }).click();
+  for (const biome of SEED_BIOMES) await expect(page.getByRole('button', { name: biome.label, exact: true })).toBeVisible();
+  await expect(page.locator('[data-tool="core:biome-crystal"], [data-tool="core:biome-candy"]')).toHaveCount(0);
+  await page.getByRole('button', { name: NATURAL_BIOMES[first].label, exact: true }).click();
   await expect(page.locator('.camera-hint')).toContainText('Left-drag: plant');
   const camera = new Camera(); camera.width = 1440; camera.height = 960; camera.fit(48, 48);
   const start = camera.worldToScreen(16, 24), end = camera.worldToScreen(30, 24);
   await page.mouse.move(start.x, start.y); await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 20 }); await page.mouse.up();
-  await expect.poll(async () => (await savedWorld(page)).terrain.biomes?.[24 * 48 + 30]).toBe(NaturalBiome.Swamp);
+  await expect.poll(async () => (await savedWorld(page)).terrain.biomes?.[24 * 48 + 30]).toBe(first);
   const painted = await savedWorld(page);
-  for (let x = 16; x <= 30; x++) expect(painted.terrain.biomes![24 * 48 + x]).toBe(NaturalBiome.Swamp);
+  for (let x = 16; x <= 30; x++) expect(painted.terrain.biomes![24 * 48 + x]).toBe(first);
   expect(painted.tick).toBe(0);
   expect(painted.terrain.tiles).toEqual(world.terrain.tiles);
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
   expect((await savedWorld(page)).terrain.biomes).toEqual(painted.terrain.biomes);
   await page.locator('[data-category="biomes"]').click();
-  await page.getByRole('button', { name: 'Desert seeds', exact: true }).click();
+  await page.getByRole('button', { name: NATURAL_BIOMES[second].label, exact: true }).click();
   await page.mouse.move(start.x, start.y); await page.mouse.down({ button: 'right' });
   await page.mouse.move(start.x + 96, start.y, { steps: 10 }); await page.mouse.up({ button: 'right' });
   const moved = camera.worldToScreen(24, 24);
   await page.mouse.click(moved.x + 96, moved.y);
-  await expect.poll(async () => (await savedWorld(page)).terrain.biomes?.[24 * 48 + 24]).toBe(NaturalBiome.Desert);
+  await expect.poll(async () => (await savedWorld(page)).terrain.biomes?.[24 * 48 + 24]).toBe(second);
   expect((await savedWorld(page)).terrain.biomes![24 * 48 + 33]).toBe(painted.terrain.biomes![24 * 48 + 33]);
   expect(errors).toEqual([]);
 });
+}
 
-test('renders all climate zones, localizes every brush, and keeps tools accessible at desktop widths', async ({ page }) => {
+test('renders all biomes, localizes every brush, and keeps tools accessible at different widths', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const world = new World(20); world.paused = true;
   await installWorld(page, world.snapshot());
@@ -78,17 +81,17 @@ test('renders all climate zones, localizes every brush, and keeps tools accessib
   for (const language of languages) {
     await page.locator('#settings').click(); await page.locator('#language-select').selectOption(language.id);
     await page.locator('#settings-dialog button[value="done"]').click();
-    for (const biome of NATURAL_BIOMES) {
+    for (const biome of SEED_BIOMES) {
       await page.getByRole('button', { name: translate(biome.label, language.id), exact: true }).click();
       await expect(page.locator('#tool-hint')).toHaveText(translate(biome.hint, language.id));
     }
   }
-  for (const width of [1440, 1024]) {
+  for (const width of [1440, 1024, 640, 390]) {
     await page.setViewportSize({ width, height: 960 });
     await page.locator('[data-category="biomes"]').click();
-    for (const biome of NATURAL_BIOMES) {
+    for (const biome of SEED_BIOMES) {
       const button = page.locator(`[data-tool="core:biome-${biome.key}"]`);
-      await button.scrollIntoViewIfNeeded();
+      await button.evaluate(element => element.scrollIntoView({ inline: 'center', block: 'nearest' }));
       const box = (await button.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
       await button.click(); await expect(button).toHaveAttribute('aria-pressed', 'true');

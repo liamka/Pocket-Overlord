@@ -5,6 +5,7 @@ import { drawResidentSprite } from './residents';
 import { drawHarborSprite, drawShipSprite } from './seafaring';
 import { drawUfoSprite } from './ufos';
 import type { RaceId } from '../core/races';
+import { drawAnimal, drawWorkplace } from './village-life';
 export const villageColor = (id: number): string => ['#e7b86e', '#78c6da', '#e28b89', '#b7a1df', '#aaca73', '#e3a8ce'][(id - 1) % 6];
 
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w: number, h: number): void => {
@@ -51,7 +52,11 @@ export function drawStatusBubble(ctx: CanvasRenderingContext2D, kind: StatusIcon
 export function drawSprite(ctx: CanvasRenderingContext2D, sprite: Sprite, variant = 0, time = 0, child = false, growth = 0, color?: string, race: RaceId = 'human'): void {
   if (typeof sprite !== 'string') { drawPixels(ctx, sprite); return; }
   const r = (color: string, x: number, y: number, w: number, h: number): void => pixel(ctx, color, x, y, w, h);
-  if (sprite === 'ship') {
+  if (sprite === 'sheep' || sprite === 'dog' || sprite === 'wolf') {
+    drawAnimal(ctx, { kind: sprite, age: child ? 0 : 20, heading: 0, stride: time * 5, moving: true, hunger: 0 }, color);
+  } else if (sprite === 'market' || sprite === 'mill' || sprite === 'bakery' || sprite === 'workshop') {
+    drawWorkplace(ctx, sprite, time, color);
+  } else if (sprite === 'ship') {
     drawShipSprite(ctx, time);
   } else if (sprite === 'harbor') {
     drawHarborSprite(ctx, time);

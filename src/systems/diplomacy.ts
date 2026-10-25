@@ -4,6 +4,7 @@ import { roadIsIntact } from '../core/roads';
 import { dispatchCaravan } from './caravans';
 import { alliedGroup, allianceGroups, opposingSides, sideName } from '../core/diplomacy';
 import { noise } from '../core/random';
+import { recordWarOutcome } from './governance';
 import { SOCIAL_EVENT_RATE, type Entity, type War } from '../core/types';
 
 export function atWar(world: World, a: number | null, b: number | null): boolean {
@@ -145,6 +146,7 @@ export function declareWar(world: World, a: number, b: number): War | undefined 
 
 export function endWar(world: World, war: War, reason: string): void {
   if (!world.society.wars.some(w => w.id === war.id)) return;
+  recordWarOutcome(world, war);
   world.society.wars = world.society.wars.filter(w => w.id !== war.id);
   for (const r of world.society.relations) if (opposingSides(war, r.a, r.b) && !atWar(world, r.a, r.b)) {
     r.status = 'neutral'; r.affinity = -5; r.since = world.tick; r.nextDecision = world.tick + 1800 / SOCIAL_EVENT_RATE;

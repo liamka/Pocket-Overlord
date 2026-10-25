@@ -99,6 +99,12 @@ export class World {
     for (const key of Object.keys(entity.components) as ComponentKey[]) this.componentIndex.get(key)?.delete(id);
     this.spatial.remove(id);
     this.entities.delete(id);
+    for (const village of this.society.villages) if (village.government?.leaderId === id) village.government.leaderId = null;
+    for (const animal of this.query('animal')) {
+      const state = animal.components.animal!;
+      if (state.ownerId === id) state.ownerId = null;
+      if (state.targetId === id) { state.targetId = null; state.path = []; state.decisionIn = 0; }
+    }
     for (const { ferry } of ferryRoutes(this)) ferry.passengers = ferry.passengers.filter(passenger => passenger !== id);
     for (const group of this.society.migrations) {
       group.members = group.members.filter(member => member !== id);
@@ -113,6 +119,8 @@ export class World {
     for (const other of this.query('citizen')) {
       const citizen = other.components.citizen!;
       if (citizen.partnerId === id) citizen.partnerId = null;
+      if (citizen.integration?.friendId === id) citizen.integration.friendId = null;
+      if (citizen.integration?.contactId === id) { citizen.integration.contactId = null; citizen.integration.contact = 0; }
       if (citizen.targetId === id) { citizen.targetId = null; citizen.path = []; citizen.reconsiderIn = 0; citizen.task = 'idle'; }
       if (citizen.emergency?.targetId === id) { delete citizen.emergency; citizen.reconsiderIn = 0; }
     }

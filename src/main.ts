@@ -5,7 +5,7 @@ import { setDragonViewport } from './content/dragons';
 import { FixedClock } from './core/clock';
 import { World } from './core/world';
 import { SIMULATION_SPEEDS, type GameCommand, type SimulationSpeed } from './core/types';
-import { DesktopController } from './input/controller';
+import { InputController } from './input/controller';
 import { IndexedDBBackend, SaveService } from './persistence/storage';
 import { Renderer } from './render/renderer';
 import { UI } from './ui';
@@ -34,7 +34,7 @@ const dispatch = (command: GameCommand): void => {
   if (message) ui.toast(message);
   updateUI();
 };
-const input = new DesktopController(renderer, {
+const input = new InputController(renderer, {
   tool: () => selected,
   select: id => { selected = registry.tools.get(id)!; renderer.tool = selected; ui.select(selected); },
   tools: () => registry.tools.values(),
@@ -44,6 +44,7 @@ const input = new DesktopController(renderer, {
   blocked: () => !ready || modalOpen(),
   cameraChanged: updateUI,
 });
+input.bindTouchControls(ui.touchControls);
 for (const button of ui.speedButtons) button.addEventListener('click', () => {
   dispatch({ kind: 'speed', speed: Number(button.dataset.speed) as SimulationSpeed });
   ui.closeSpeedMenu(true);
@@ -97,7 +98,6 @@ window.addEventListener('resize', () => { renderer.resize(); updateUI(); });
 // Track the rendered canvas box, not just the browser window's resize event.
 const canvasObserver = new ResizeObserver(() => {
   renderer.resize();
-  if (world) renderer.camera.fit(world.terrain.width, world.terrain.height);
   updateUI();
 });
 canvasObserver.observe(ui.canvas);
@@ -140,7 +140,7 @@ async function loadWorld(): Promise<void> {
   await paintLoading();
   if (result.status === 'loaded') { world = new World(result.snapshot.seed, registry, result.snapshot); ui.saved('Мир восстановлен'); }
   else { world = new World(seed(), registry); ui.saved('Автосохранение каждые 5 с'); }
-  // Physical mouse holds do not survive a page reload.
+  // Held mouse and touch gestures do not survive a page reload.
   for (const tool of registry.tools.values()) tool.release?.(world);
   ui.setLoadingProgress(3, 4);
   await paintLoading();

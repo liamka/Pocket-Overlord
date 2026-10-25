@@ -7,7 +7,7 @@ import { initialResidentAnimation, residentAction, type ResidentAction } from '.
 type Point = readonly [number, number];
 export interface ResidentPose extends Partial<ResidentAnimation> {
   time?: number; variant?: number; race?: RaceId; child?: boolean; color?: string;
-  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'bucket' | 'bandage'; load?: 'planks' | 'pack';
+  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'bucket' | 'bandage' | 'feed'; load?: 'planks' | 'pack' | 'grain' | 'flour' | 'bread' | 'tools';
 }
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w = 1, h = 1): void => {
   ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
@@ -115,11 +115,21 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   }
   const hand = arms(facing);
   if (action === 'carry' && pose.load !== 'pack') {
+    if (pose.load && pose.load !== 'planks') {
+      const shade = pose.load === 'flour' ? '#eee1ba' : pose.load === 'bread' ? '#d9a155' : '#bba06b';
+      pixel(ctx, '#69563a', -5 + lean, chestY - 2, 11, 8); pixel(ctx, shade, -4 + lean, chestY - 3, 9, 8);
+      if (pose.load === 'tools') { pixel(ctx, '#d5dfce', -2 + lean, chestY - 5, 6, 2); pixel(ctx, '#725137', lean, chestY - 3, 2, 5); }
+      else { pixel(ctx, '#7c653e', -1 + lean, chestY - 4, 3, 2); pixel(ctx, '#fff0c4', -3 + lean, chestY - 1, 2, 3); }
+    } else {
     for (let i = 0; i < 3; i++) {
       pixel(ctx, '#6c4f35', -6 + lean + i % 2, chestY - 1 + i * 2, 13, 2);
       pixel(ctx, '#dbba7b', -6 + lean + i % 2, chestY - 1 + i * 2, 12, 1);
     }
     pixel(ctx, '#89795a', -2 + lean, chestY - 1, 1, 6); pixel(ctx, '#89795a', 4 + lean, chestY - 1, 1, 6);
+    }
+  } else if (pose.tool === 'feed') {
+    pixel(ctx, '#b9904f', hand[0] - 2, hand[1], 5, 4); pixel(ctx, '#efd088', hand[0] - 2, hand[1], 5, 1);
+    if (action === 'aid') for (let i = 0; i < 3; i++) pixel(ctx, '#e9c36d', hand[0] + Math.cos(heading) * (3 + work * 5 + i), hand[1] + 2 + work * 4, 1, 1);
   } else if (pose.tool === 'bucket' || action === 'extinguish') {
     pixel(ctx, '#475b61', hand[0] - 2, hand[1], 6, 5); pixel(ctx, '#a9bfbc', hand[0] - 1, hand[1] + 1, 4, 3);
     pixel(ctx, '#8ad8ef', hand[0] - 1, hand[1], 4, 1);
@@ -157,6 +167,12 @@ export function drawResident(ctx: CanvasRenderingContext2D, world: World, entity
   const action = residentAction(world, entity);
   drawResidentSprite(ctx, { ...(person.animation ?? initialResidentAnimation(entity.components.motion?.heading)), action,
     time: world.tick / 30 + entity.id * 0.37, variant: entity.components.appearance?.variant, race: raceOf(entity), child: person.age < 18, color,
-    load: c?.task === 'migrate' ? 'pack' : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
-      : c?.task === 'build' || c?.task === 'repair' ? 'hammer' : c?.task === 'farm' ? 'hoe' : c?.task === 'fight' ? 'sword' : undefined });
+    load: c?.task === 'migrate' ? 'pack' : c?.work?.cargo ? c.work.cargo.good === 'wood' ? 'planks' : c.work.cargo.good : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
+      : c?.task === 'tend' ? 'feed' : c?.task === 'build' || c?.task === 'repair' || c?.task === 'work' ? 'hammer' : c?.task === 'farm' ? 'hoe' : c?.task === 'fight' || c?.task === 'guard' ? 'sword' : undefined });
+  const neighbor = world.entities.get(c?.targetId ?? -1)?.components.position, p = entity.components.position!;
+  if (c?.task === 'socialize' && !c.emergency && neighbor && Math.hypot(p.x - neighbor.x, p.y - neighbor.y) <= 2.2) {
+    const y = person.age < 18 ? -22 : -28;
+    pixel(ctx, '#f5eed8', -4, y, 9, 5); pixel(ctx, '#f5eed8', -2, y + 5, 2, 2);
+    for (let i = 0; i < 3; i++) pixel(ctx, '#5c6c5c', -2 + i * 2, y + 2);
+  }
 }

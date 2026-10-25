@@ -8,9 +8,11 @@ import { registerDragons } from './dragons';
 import { registerUfos } from './ufos';
 import { registerKaiju } from './kaiju';
 import { registerNaturalBiomes } from './natural-biomes';
+import { registerTerraforming } from './terraforming';
 import { registerPeoples } from './peoples';
 import { registerThunderstorms } from './thunderstorms';
 import { registerSeafaring } from './seafaring';
+import { registerVillageLife } from './village-life';
 import { type ComponentKey, type Components, type Vec2 } from '../core/types';
 
 function burnable(position: Vec2, health: number, fuel: number, ignition: number): Components {
@@ -54,9 +56,11 @@ export const coreContent: ContentPack = {
     .registerTool({ id: 'core:rocket', category: 'destruction', icon: 'rocket', label: 'Ракета', radius: 4.5, color: '#e5b8e8', hint: 'Choose a target. A rocket flies in from a random direction.', apply: (world, p) => { if (!world.spawn('core:rocket', p)) return 'В мире слишком много объектов'; } });
     registerThunderstorms(registry);
     registerSeafaring(registry);
+    registerVillageLife(registry);
     registerDragons(registry);
     registerUfos(registry);
     registerKaiju(registry);
+    registerTerraforming(registry);
     registerNaturalBiomes(registry);
     registerNapalm(registry);
     registerSuperweapons(registry);

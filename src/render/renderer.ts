@@ -20,7 +20,9 @@ import { SuperweaponAnimations } from './superweapons';
 import { NAPALM_FIRE_ID, napalmStrikes } from '../content/napalm';
 import { rocketPose } from '../core/flight';
 import { localizedSettlementName } from '../content/settlement-names';
-import type { Language } from '../i18n';
+import { translate, type Language } from '../i18n';
+import { residentName } from '../core/village-life';
+import { drawAnimal } from './village-life';
 import { Ocean, OCEAN_COLOR } from './ocean';
 import { drawDragon, drawDragonGroundFire, drawDragonShadow } from './dragons';
 import { DRAGON_FIRE_ID, dragonGroundPosition } from '../content/dragons';
@@ -31,6 +33,7 @@ import { kaijuImpact } from '../content/kaiju';
 import { drawThunderstorms } from './thunderstorms';
 import { drawHarbor, drawMooring, drawShip, drawShipWake } from './seafaring';
 import { drawUfo, drawUfoGround } from './ufos';
+import { captureLandPatch, TerraformAnimations } from './terraforming';
 
 interface Particle { x: number; y: number; vx: number; vy: number; age: number; life: number; color: string; size: number }
 const PARTICLE_LIMIT = 600;
@@ -54,6 +57,7 @@ export class Renderer {
   private visualSerial = 0;
   private readonly destruction = new DestructionAnimations();
   private readonly collapses = new HouseCollapseAnimations();
+  private readonly terraforming = new TerraformAnimations();
   private readonly napalm = new NapalmAnimations();
   private readonly superweapons = new SuperweaponAnimations();
   private readonly statuses = new StatusBubbles();
@@ -83,7 +87,7 @@ export class Renderer {
     if (this.world !== world) {
       this.world = world;
       this.ground.width = world.terrain.width * TILE; this.ground.height = world.terrain.height * TILE;
-      world.terrain.markAllDirty(); this.particles = []; this.destruction.reset(); this.collapses.reset(); this.napalm.reset();
+      world.terrain.markAllDirty(); this.particles = []; this.destruction.reset(); this.collapses.reset(); this.napalm.reset(); this.terraforming.reset();
     }
     this.ocean.update(world.terrain);
     // A changed ridge also changes the exposed edges of its adjacent tiles.
@@ -180,8 +184,12 @@ export class Renderer {
     const elapsed = this.previous && this.world === world ? Math.max(0, Math.min(0.05, (now - this.previous) / 1000)) : 0;
     const dt = elapsed * world.speed;
     this.previous = now;
-    this.terrain(world);
     const visuals = world.visuals.splice(0);
+    const edits = visuals.flatMap(event => event.kind === 'terraform'
+      ? [{ event, before: this.world === world ? captureLandPatch(event, this.ground) : undefined }] : []);
+    this.terrain(world);
+    this.terraforming.update(elapsed);
+    for (const edit of edits) this.terraforming.start(edit.event, this.ground, world, edit.before);
     this.statuses.update(world, visuals);
     const { ctx, camera } = this;
     // Keep blast phases readable at high speeds without delaying simulation damage.
@@ -214,6 +222,7 @@ export class Renderer {
     }
     ctx.save(); ctx.translate(Math.round(origin.x) + this.destruction.shakeX + shake.x, Math.round(origin.y) + this.destruction.shakeY + shake.y); ctx.scale(camera.zoom, camera.zoom);
     ctx.drawImage(this.ground, 0, 0);
+    this.terraforming.ground(ctx);
     this.superweapons.ground(ctx, world);
     this.ocean.drawWaves(ctx, world, false);
     this.collapses.ground(ctx);
@@ -301,16 +310,22 @@ export class Renderer {
         ctx.globalAlpha = 0.65;
         if (explosive) { ctx.beginPath(); ctx.rect(-20, -9, 40, 30); ctx.clip(); }
       }
-      const villageId = citizen?.villageId ?? dwelling?.villageId ?? caravan?.fromId;
+      const villageId = citizen?.villageId ?? dwelling?.villageId ?? caravan?.fromId ?? entity.components.animal?.villageId ?? entity.components.workplace?.villageId;
       if (caravan?.path[caravan.next] && caravan.path[caravan.next].x < p!.x) ctx.scale(-1, 1);
       const race = caravan ? world.society.villages.find(v => v.id === caravan.fromId)?.race ?? 'human' : raceOf(entity);
       if (person) drawResident(ctx, world, entity, villageId ? villageColor(villageId) : undefined);
+      else if (entity.components.animal) drawAnimal(ctx, entity.components.animal, villageId ? villageColor(villageId) : undefined);
       else if (entity.components.ruin) drawRuin(ctx, entity);
       else if (dwelling?.construction) drawConstruction(ctx, entity, world.tick, villageId ? villageColor(villageId) : undefined);
       else if (sprite !== 'tree' || !drawBiomeTree(ctx, world.terrain.biomeAt(p!.x, p!.y).id, appearance?.variant)) {
         drawSprite(ctx, sprite, appearance?.variant, time + entity.id, false, caravan ? caravan.food / 12 : farm?.growth, villageId ? villageColor(villageId) : undefined, race);
       }
       ctx.restore();
+      if (person && world.society.villages.some(v => v.government?.leaderId === entity.id)) {
+        ctx.fillStyle = '#775b2e'; ctx.fillRect(x - 4, y - 24, 9, 4);
+        ctx.fillStyle = '#f4d475'; ctx.fillRect(x - 3, y - 24, 7, 3); ctx.fillRect(x, y - 27, 1, 6);
+        ctx.fillRect(x - 3, y - 26, 1, 3); ctx.fillRect(x + 3, y - 26, 1, 3);
+      }
       if (submerged) {
         const wave = Math.floor(Math.sin(time * 5 + entity.id) * 2);
         ctx.fillStyle = '#acdfe5b0'; ctx.fillRect(x - 6 - wave, y + 1, 4, 1); ctx.fillRect(x + 3 + wave, y + 1, 4, 1);
@@ -356,9 +371,31 @@ export class Renderer {
       const width = ctx.measureText(name).width + 12;
       ctx.fillStyle = '#21382bd9'; ctx.fillRect(x - width / 2, y - 10, width, 15);
       ctx.fillStyle = villageColor(village.id); ctx.fillText(name, x, y);
+      if (village.government?.leaderId != null) {
+        ctx.fillStyle = '#26382d'; ctx.fillRect(x - 16, y + 7, 32, 2);
+        ctx.fillStyle = village.government.trust < 30 ? '#df885e' : '#a5c77b'; ctx.fillRect(x - 16, y + 7, 32 * village.government.trust / 100, 2);
+      }
+      if (this.cursor && camera.zoom >= 0.8 && Math.hypot(this.cursor.x - village.x, this.cursor.y - village.y) < 4) {
+        const g = village.government, e = village.economy;
+        const herd = [...world.query('animal')].filter(a => a.components.animal!.villageId === village.id);
+        const lines = [g?.leaderId ? translate('Elder: {name} · Trust: {trust}%', language, { name: residentName(g.leaderId), trust: Math.round(g.trust) }) : translate('No elder elected', language),
+          translate('Sheep: {sheep} · Dogs: {dogs}', language, { sheep: herd.filter(a => a.components.animal!.kind === 'sheep').length, dogs: herd.filter(a => a.components.animal!.kind === 'dog').length }),
+          ...(e ? [translate('Grain: {grain} · Flour: {flour} · Bread: {bread}', language, { grain: Math.floor(e.stocks.grain), flour: Math.floor(e.stocks.flour), bread: Math.floor(e.stocks.bread) }),
+            translate('Wood: {wood} · Tools: {tools} · Deliveries: {count}', language, { wood: Math.floor(e.stocks.wood), tools: Math.floor(e.stocks.tools), count: e.deliveries })] : [])];
+        ctx.save(); ctx.translate(x, y + 13); ctx.scale(1 / camera.zoom, 1 / camera.zoom);
+        ctx.font = ctx.font.replace('10px', '12px');
+        const panelWidth = Math.max(...lines.map(line => ctx.measureText(line).width)) + 20, panelHeight = lines.length * 18 + 12;
+        const screenX = origin.x + x * camera.zoom, screenY = origin.y + (y + 13) * camera.zoom;
+        const left = Math.max(6 - screenX, Math.min(-panelWidth / 2, camera.width - screenX - panelWidth - 6));
+        const top = screenY + panelHeight > camera.height - 6 ? -panelHeight - 24 : 0;
+        ctx.fillStyle = '#1d2e28f2'; ctx.fillRect(left, top, panelWidth, panelHeight);
+        ctx.fillStyle = '#eee3bf'; lines.forEach((line, i) => ctx.fillText(line, left + panelWidth / 2, top + 18 + i * 18));
+        ctx.restore();
+      }
     }
     ctx.textAlign = 'start';
     this.ocean.drawWaves(ctx, world, true);
+    this.terraforming.spray(ctx, world);
     for (const entity of world.query('kaiju', 'position')) {
       drawKaijuBeam(ctx, entity.components.position!, entity.components.kaiju!, world.terrain.width, world.terrain.height);
     }

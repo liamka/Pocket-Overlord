@@ -86,7 +86,7 @@ test('harbor and ship tools work through the real UI and survive saving and relo
     const camera = new Camera(); camera.width = canvas.clientWidth; camera.height = canvas.clientHeight; camera.fit(48, 48);
     return camera.worldToScreen(p.x, p.y);
   }, point);
-  await page.locator('[data-category="people"]').click();
+  await page.locator('[data-category="buildings"]').click();
   await page.getByRole('button', { name: 'Harbor', exact: true }).click();
   await page.locator('#world').click({ position: await screenPoint({ x: 23.5, y: 24.5 }) });
   await page.getByRole('button', { name: 'Ship', exact: true }).click();

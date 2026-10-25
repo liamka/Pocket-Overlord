@@ -6,6 +6,7 @@ import { assignHouse, atWar, buildHouse, fertilePatch, villageOf } from './socie
 import { raceOf } from '../core/races';
 import { findPath, reachableTiles } from './navigation';
 import { unsafe } from './emergencies';
+import { beginIntegration } from './integration';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const inWar = (world: World, id: number): boolean => world.society.wars.some(w => w.attackers.includes(id) || w.defenders.includes(id));
@@ -65,6 +66,7 @@ function depart(world: World, from: Village, members: Entity[], destination: Vec
   world.society.migrations.push(group);
   for (const e of members) {
     e.components.person!.homeId = null;
+    delete e.components.citizen!.integration;
     Object.assign(e.components.citizen!, { task: 'migrate', targetId: null, path: [], reconsiderIn: 0, repair: null });
   }
   const target = villageOf(world, group.toId);
@@ -100,8 +102,10 @@ function plan(world: World): void {
   const villages = world.society.villages;
   if (world.tick % 150 !== 0 || !villages.length || world.society.migrations.length >= 16) return;
   const from = villages[Math.floor(world.tick / 150) % villages.length];
-  if (world.tick < from.migrationAfter) return;
   const residents = [...world.query('person', 'citizen', 'position')].filter(e => e.components.citizen!.villageId === from.id && e.components.citizen!.task !== 'migrate');
+  const wantsToLeave = (e: Entity): boolean => e.components.person!.age >= 18 && e.components.citizen!.integration?.status === 'isolated'
+    && world.tick >= e.components.citizen!.integration!.leaveAfter;
+  if (world.tick < from.migrationAfter && !residents.some(wantsToLeave)) return;
   const families: Entity[][] = [], selected = new Set<number>();
   for (const adult of residents) {
     if (adult.components.person!.age < 18 || adult.components.person!.displaced || selected.has(adult.id)) continue;
@@ -111,24 +115,32 @@ function plan(world: World): void {
   }
   if (!families.length) return;
   const war = inWar(world, from.id);
-  const need = families.find(f => war || f.some(e => e.components.person!.homeId === null)
+  const need = families.find(f => f.some(wantsToLeave) || war || f.some(e => e.components.person!.homeId === null)
     || from.food < residents.length * 0.5 && f.some(e => e.components.citizen!.hunger >= 65));
   const reserved = reservedBeds(world);
   if (need) {
     const homes = [...world.query('dwelling', 'position')].filter(h => {
       const d = h.components.dwelling!, to = villageOf(world, d.villageId);
-      return to && to.id !== from.id && !inWar(world, to.id) && !atWar(world, from.id, to.id) && !h.components.thermal?.burning
+      return to && to.id !== from.id && !d.construction && !inWar(world, to.id) && !atWar(world, from.id, to.id) && !unsafe(world, h.components.position!)
         && need.every(e => raceOf(e) === raceOf(h))
         && d.capacity - occupants(world, h.id) - (reserved.get(h.id) ?? 0) >= need.length
         && to.food >= foodReserve(world.tick, [...world.query('citizen')].filter(e => e.components.citizen!.villageId === to.id).length + need.length);
     }).sort((a, b) => distance(from, a.components.position!) - distance(from, b.components.position!));
     for (const home of homes.slice(0, 3)) {
-      const path = findPath(world, need[0].components.position!, home.components.position!, 2.2);
-      if (path) { depart(world, from, need, home.components.position!, home); return; }
+      if (need.every(e => !e.components.citizen!.emergency && !aboardFerry(world, e.id)
+        && findPath(world, e.components.position!, home.components.position!, 2.2, (_from, to) => !unsafe(world, to, 3.3)) !== undefined)) {
+        const isolated = need.some(wantsToLeave);
+        depart(world, from, need, home.components.position!, home);
+        if (isolated) world.announce(`${from.name}: an isolated family left for ${villageOf(world, home.components.dwelling!.villageId)!.name}`);
+        return;
+      }
     }
+    for (const member of need) if (wantsToLeave(member)) member.components.citizen!.integration!.leaveAfter = world.tick + 900;
   }
   if (war || seasonAt(world.tick).id === 'winter' || residents.length < 12 || families.length < 2 || world.entities.size > ENTITY_LIMIT - 4) return;
-  const pioneers = families.filter(f => f.some(e => e.components.person!.age >= 18)).slice(0, 2).flat();
+  const pioneers = families.filter(f => f.some(e => e.components.person!.age >= 18)
+    && f.every(e => !e.components.citizen!.integration || e.components.citizen!.integration!.status === 'settled'
+      && world.tick - e.components.citizen!.integration!.arrived >= 3600)).slice(0, 2).flat();
   if (pioneers.length < 4 || residents.length - pioneers.length < 4
     || from.food < foodReserve(world.tick, residents.length - pioneers.length) + pioneers.length * 3) return;
   const reachable = reachableTiles(world, [pioneers[0].components.position!], 120);
@@ -144,7 +156,10 @@ function finish(world: World, group: Migration, homes?: Entity[]): void {
     const e = world.entities.get(id);
     if (!e?.components.citizen || !e.components.person) continue;
     const home = homes?.find(h => occupants(world, h.id) < h.components.dwelling!.capacity);
-    if (home && destination) { e.components.person.homeId = home.id; delete e.components.person.displaced; e.components.citizen.villageId = destination.id; }
+    if (home && destination) {
+      e.components.person.homeId = home.id; delete e.components.person.displaced; e.components.citizen.villageId = destination.id;
+      beginIntegration(world, e, group);
+    }
     Object.assign(e.components.citizen, { task: 'idle', targetId: null, path: [], reconsiderIn: 0, repair: null });
   }
   const pantry = destination ?? source;

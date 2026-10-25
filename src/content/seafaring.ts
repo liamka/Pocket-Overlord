@@ -24,14 +24,14 @@ export function registerSeafaring(registry: Registry): void {
       phase: 'idle', wait: 0, cargo: 0, path: [], next: 0, wake: [] },
   }) });
   registry.registerTool({ id: HARBOR_ID, label: 'Harbor', hint: 'Place a harbor on an open coast. Coastal villages also build harbors and launch fishing and trade ships.',
-    category: 'people', icon: 'harbor', color: '#e1bc76', radius: 3, canApply: (w, p) => harborSite(w, { x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 }) !== undefined,
+    category: 'buildings', icon: 'harbor', color: '#e1bc76', radius: 3, canApply: (w, p) => harborSite(w, { x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 }) !== undefined,
     apply: (world, p) => {
       const position = { x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 };
       if (harborSite(world, position) === undefined) return 'Choose an open coast with room for a pier';
       if (!buildHarbor(world, position)) return 'Too many objects in the world';
     } });
   registry.registerTool({ id: SHIP_ID, label: 'Ship', hint: 'Launch a sailboat in open water. Ships fish and return to nearby harbors; larger ships trade between settlements.',
-    category: 'people', icon: 'ship', color: '#d9edf1', radius: 2.6, canApply: canSail,
+    category: 'buildings', icon: 'ship', color: '#d9edf1', radius: 2.6, canApply: canSail,
     apply: (world, p) => {
       if (!canSail(world, p)) return 'Choose open water away from the shore';
       if (!world.spawn(SHIP_ID, p)) return 'Too many objects in the world';

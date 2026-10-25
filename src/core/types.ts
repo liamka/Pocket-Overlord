@@ -1,4 +1,5 @@
 import type { RaceId } from './races';
+import type { Integration, ResidentWork, VillageEconomy, VillageGovernment } from './village-life';
 
 export interface Vec2 { x: number; y: number }
 export interface WorldViewport { left: number; top: number; right: number; bottom: number }
@@ -14,10 +15,10 @@ export interface CoreComponents {
   thermal: { temperature: number; wetness: number; burning: boolean };
   motion: { vx: number; vy: number; speed: number; heading: number; decisionIn: number };
   person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation; displaced?: { homeId: number; since: number } };
-  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'fight' | 'repair' | 'build' | 'migrate'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency };
+  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'socialize' | 'fight' | 'repair' | 'build' | 'migrate' | 'work' | 'deliver' | 'tend' | 'guard'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency; work?: ResidentWork; service?: number; integration?: Integration };
   dwelling: { race?: RaceId; capacity: number; villageId: number | null; construction?: Construction };
   ruin: { race: RaceId; villageId: number | null; homeId: number; capacity: number; destroyedAt: number };
-  farm: { villageId: number; growth: number; harvests: number };
+  farm: { villageId: number; growth: number; harvests: number; grain?: number };
   caravan: { fromId: number; toId: number | null; food: number; path: Vec2[]; next: number; returning: boolean; retryIn: number };
   solid: { radius: number };
   explosive: { fuse: number; radius: number; power: number; heat: number };
@@ -54,11 +55,14 @@ export interface GameEventMap {
 export type EventKind = keyof GameEventMap;
 export type GameEvent<K extends EventKind = EventKind> = { [P in K]: { kind: P } & GameEventMap[P] }[K];
 export interface RainEffect extends Vec2 { kind: 'rain'; radius: number; remaining: number }
+export type LandChange = { x: number; y: number; from: Terrain; to: Terrain };
+export type LandEdit = Vec2 & { kind: 'terraform'; radius: number; mode: 'raise' | 'lower'; tiles: LandChange[] };
 export type VisualEvent = Vec2 & { radius: number } & (
   | { kind: 'blast'; style?: 'napalm' | 'rocket' | 'dynamite' }
   | { kind: 'birth' | 'build' }
   | { kind: 'collapse'; house: Entity; tick: number }
   | { kind: 'love'; target: number }
+  | LandEdit
 );
 export const SIMULATION_SPEEDS = [0.2, 1, 2, 4, 10, 40] as const;
 export type SimulationSpeed = typeof SIMULATION_SPEEDS[number];
@@ -88,7 +92,7 @@ export interface WorldSnapshot {
   contentPacks: string[];
   scenarios: { id: string; state: import('./validation').JsonValue }[];
 }
-export interface Village extends Vec2 { id: number; race?: RaceId; name: string; food: number; harvested: number; founded: number; migrationAfter: number }
+export interface Village extends Vec2 { id: number; race?: RaceId; name: string; food: number; harvested: number; founded: number; migrationAfter: number; economy?: VillageEconomy; government?: VillageGovernment; livestock?: { established: boolean; threatAfter: number } }
 export interface Migration {
   id: number; fromId: number; toId: number | null; destination: Vec2;
   members: number[]; homeIds: number[]; food: number; started: number;
@@ -112,4 +116,4 @@ export const POPULATION_LIMIT = 300;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;
-export const SAVE_VERSION = 29;
+export const SAVE_VERSION = 31;

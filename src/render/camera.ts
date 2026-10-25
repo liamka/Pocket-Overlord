@@ -7,8 +7,11 @@ export class Camera {
   zoom = 1;
   width = 1;
   height = 1;
+  private minZoom = 0.175;
   fit(worldWidth: number, worldHeight: number): void {
-    this.zoom = Math.max(0.175, Math.min(2, this.width / (worldWidth * TILE * 0.93), (this.height - 220) / (worldHeight * TILE * 0.93)));
+    const fitZoom = Math.max(0.04, Math.min(2, this.width / (worldWidth * TILE * 0.93), (this.height - 220) / (worldHeight * TILE * 0.93)));
+    this.minZoom = Math.min(0.175, fitZoom);
+    this.zoom = fitZoom;
     this.x = worldWidth / 2;
     // Center the full silhouette in the area above the tool dock.
     this.y = worldHeight / 2 + (this.height * 0.46 - (this.height - 200) / 2) / (TILE * this.zoom);
@@ -18,7 +21,7 @@ export class Camera {
   worldToScreen(x: number, y: number): Vec2 { const origin = this.origin; return { x: origin.x + x * TILE * this.zoom, y: origin.y + y * TILE * this.zoom }; }
   zoomAt(factor: number, x: number, y: number): void {
     const before = this.screenToWorld(x, y);
-    this.zoom = Math.min(5, Math.max(0.175, this.zoom * factor));
+    this.zoom = Math.min(5, Math.max(this.minZoom, this.zoom * factor));
     const after = this.screenToWorld(x, y);
     this.x += before.x - after.x; this.y += before.y - after.y;
   }

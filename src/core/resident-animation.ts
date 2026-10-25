@@ -36,7 +36,7 @@ export function residentAction(world: World, entity: Entity): ResidentAction {
     if (state.kind !== 'flee' && q && !state.path.length && Math.hypot(p.x - q.x, p.y - q.y) <= (state.kind === 'extinguish' ? 3.95 : 1.75)) return state.kind;
     return 'idle';
   }
-  if ((person.animation?.moving ?? 0) > 0.08) return c?.task === 'build' || c?.task === 'migrate' ? 'carry' : 'walk';
+  if ((person.animation?.moving ?? 0) > 0.08) return c?.task === 'build' || c?.task === 'migrate' || c?.work?.cargo ? 'carry' : 'walk';
   if (!c || person.age < 18 || entity.components.thermal?.burning || c.path.length) return 'idle';
   if (c.task === 'repair' && c.repair) {
     const x = c.repair.tile % world.terrain.width + 0.5, y = Math.floor(c.repair.tile / world.terrain.width) + 0.5;
@@ -45,6 +45,9 @@ export function residentAction(world: World, entity: Entity): ResidentAction {
   const target = world.entities.get(c.targetId ?? -1), q = target?.components.position;
   if (!q || target.components.thermal?.burning) return 'idle';
   const distance = Math.hypot(p.x - q.x, p.y - q.y);
+  if (c.task === 'work' && distance <= 2.1) return c.work?.good === 'wood' || c.work?.good === 'tools' ? 'repair' : 'farm';
+  if (c.task === 'tend' && distance <= 2) return 'aid';
+  if (c.task === 'guard' && distance <= 1.5) return 'fight';
   if (c.task === 'build' && target.components.dwelling?.construction && distance <= 2.1) return 'build';
   if (c.task === 'farm' && target.components.farm && distance <= 2) return 'farm';
   if (c.task === 'fight' && distance <= (target.components.dwelling ? 2.3 : 1.5)) return 'fight';

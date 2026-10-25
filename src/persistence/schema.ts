@@ -1,5 +1,6 @@
 import { legacyBridges } from '../core/roads';
 import type { Registry } from '../content/registry';
+import { validVillageLife } from '../content/village-life';
 import { Random } from '../core/random';
 import { NAPALM } from '../content/napalm';
 import { LEGACY_ROCKET_HEADING } from '../core/flight';
@@ -159,6 +160,10 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
   [27, save => ({ ...save, version: 28 })],
   // Disaster response and displaced households are optional in older worlds.
   [28, save => ({ ...save, version: 29 })],
+  // Village life is initialized lazily so older settlements retain their existing supplies.
+  [29, save => ({ ...save, version: 30 })],
+  // Existing residents keep their lives; integration starts with the next arrival.
+  [30, save => ({ ...save, version: 31 })],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
@@ -213,7 +218,8 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (!record(village) || !integer(village.id, 1) || villages.has(village.id) || village.id >= Number(society.nextVillageId)
       || village.race !== undefined && !isRace(village.race)
       || typeof village.name !== 'string' || village.name.length > 80 || !number(village.x, 0, width) || !number(village.y, 0, height)
-      || !number(village.food, 0, 2000) || !integer(village.harvested) || !integer(village.founded, 0, Number(save.tick)) || !integer(village.migrationAfter)) return fail();
+      || !number(village.food, 0, 2000) || !integer(village.harvested) || !integer(village.founded, 0, Number(save.tick)) || !integer(village.migrationAfter) || !validVillageLife(village)
+      || record(village.government) && Number(village.government.electedAt) > Number(save.tick)) return fail();
     villages.add(village.id);
   }
   const pairs = new Set<string>();
@@ -325,10 +331,10 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       const homeId = entity.components.person.homeId;
       if (homeId !== null) inhabitants.set(Number(homeId), (inhabitants.get(Number(homeId)) ?? 0) + 1);
     }
-    for (const key of ['citizen', 'dwelling', 'farm']) {
+    for (const key of ['citizen', 'dwelling', 'farm', 'animal', 'workplace']) {
       const component = components[key];
       if (record(component) && component.villageId !== null && !villages.has(Number(component.villageId))) fail();
-      if (record(component) && component.villageId !== null && key !== 'farm') {
+      if (record(component) && component.villageId !== null && (key === 'citizen' || key === 'dwelling')) {
         const race = key === 'dwelling' ? component.race : record(components.person) ? components.person.race : undefined;
         const village = typedSociety.villages.find(v => v.id === component.villageId);
         if ((race ?? 'human') !== (village?.race ?? 'human')) fail();
@@ -362,6 +368,18 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (seats > FERRY_CAPACITY) fail();
   }
   const byId = new Map(save.entities.map(e => [e.id as number, e.components as RecordValue]));
+  for (const village of typedSociety.villages) {
+    const leader = village.government?.leaderId;
+    if (leader != null && !record(byId.get(leader)?.person)) fail();
+  }
+  for (const entity of save.entities) {
+    const animal = entity.components.animal;
+    if (record(animal)) {
+      if (animal.ownerId !== null && !record(byId.get(Number(animal.ownerId))?.person)
+        || animal.targetId !== null && !ids.has(Number(animal.targetId))
+        || (animal.path as { x: number; y: number }[]).some(p => p.x >= width || p.y >= height)) fail();
+    }
+  }
   if (!integer(society.nextMigrationId, 1) || !Array.isArray(society.migrations) || society.migrations.length > 16) return fail();
   const migrationIds = new Set<number>(), travelers = new Set<number>(), reserved = new Map<number, number>();
   for (const group of society.migrations) {
@@ -396,6 +414,14 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       if (!record(home) || (home.race ?? 'human') !== (person.race ?? 'human')) fail();
     }
     if (c.task === 'migrate' && !travelers.has(entity.id)) fail();
+    if (c.task === 'socialize' && (!record(byId.get(Number(c.targetId))?.person) || c.targetId === entity.id)) fail();
+    if (record(c.integration)) {
+      const state = c.integration;
+      if (state.villageId !== c.villageId || Number(state.arrived) > Number(save.tick)
+        || Number(state.groupId) >= Number(society.nextMigrationId)) fail();
+      for (const key of ['friendId', 'contactId']) if (state[key] !== null
+        && (state[key] === entity.id || !record(byId.get(Number(state[key]))?.person))) fail();
+    }
     if (c.task === 'build') {
       const site = byId.get(Number(c.targetId))?.dwelling;
       if (!record(person) || Number(person.age) < 18 || !record(site) || !record(site.construction)
