@@ -1,5 +1,6 @@
 # Changelog
 
+- [#299] Rename the game to Pocket Overlord.
 - [#298] Add seven fantasy biomes with distinct vegetation, terrain, seed brushes and localized world selection.
 - [#297] Show population counts for each race in the world overview.
 - [#296] Add land raising and lowering brushes with animated earth, splashes and shoreline foam.
