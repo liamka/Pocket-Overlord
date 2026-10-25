@@ -9,13 +9,13 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/input-fixture');
   await page.evaluate(async () => {
     const inputPath = '/src/input/controller.ts', renderPath = '/src/render/renderer.ts', contentPath = '/src/content/defaults.ts';
-    const [{ DesktopController }, { Renderer }, { createRegistry }] = await Promise.all([import(inputPath), import(renderPath), import(contentPath)]);
+    const [{ InputController }, { Renderer }, { createRegistry }] = await Promise.all([import(inputPath), import(renderPath), import(contentPath)]);
     const renderer = new Renderer(document.querySelector('canvas')!);
     renderer.resize(); renderer.camera.fit(48, 48);
     const fixture: InputGlobal['inputFixture'] = { renderer, commands: [], blocked: false, tool: 'core:human' };
     (globalThis as InputGlobal).inputFixture = fixture;
     const registry = createRegistry();
-    const controller = new DesktopController(renderer, {
+    const controller = new InputController(renderer, {
       tool: () => registry.tools.get(fixture.tool), select: (id: string) => { fixture.tool = id; }, tools: () => registry.tools.values(),
       dispatch: (command: GameCommand) => fixture.commands.push(command), togglePause: () => {},
       dimensions: () => ({ x: 48, y: 48 }), blocked: () => fixture.blocked, cameraChanged: () => {},

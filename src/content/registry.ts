@@ -9,7 +9,7 @@ export interface PixelSprite {
   palette: Readonly<Record<string, string>>;
   anchor: Vec2;
 }
-export type Sprite = 'person' | 'tree' | 'house' | 'dynamite' | 'rocket' | 'crate' | 'farm' | 'caravan' | 'dragon' | 'ufo' | 'ship' | 'harbor' | PixelSprite;
+export type Sprite = 'person' | 'tree' | 'house' | 'dynamite' | 'rocket' | 'crate' | 'farm' | 'caravan' | 'dragon' | 'ufo' | 'ship' | 'harbor' | 'sheep' | 'dog' | 'wolf' | 'market' | 'mill' | 'bakery' | 'workshop' | PixelSprite;
 export type ToolIcon = 'human' | 'elf' | 'orc' | 'dwarf' | 'dynamite' | 'rain' | 'rocket' | 'dragon' | 'ufo' | 'ship' | 'harbor' | PixelSprite;
 export interface EntityDefinition {
   id: string;
@@ -28,7 +28,8 @@ export interface ToolDefinition {
   continuous?: boolean;
   /** Left-drag paints the ground; right-drag still pans the camera. */
   paint?: boolean;
-  category?: 'biomes' | 'people' | 'nature' | 'destruction';
+  paintHint?: string;
+  category?: 'biomes' | 'people' | 'buildings' | 'nature' | 'destruction';
   icon?: ToolIcon;
   canApply?: (world: World, point: Vec2) => boolean;
   apply: (world: World, point: Vec2, viewport?: WorldViewport) => string | void;

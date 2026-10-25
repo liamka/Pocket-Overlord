@@ -1,4 +1,6 @@
 import type { World } from '../core/world';
+import { economyOf, recordService } from '../core/village-life';
+import { marketOf } from './economy';
 import { SOCIAL_EVENT_RATE, Terrain, type Entity, type Vec2, type Village } from '../core/types';
 import { findRoadPath, reachableTiles } from './navigation';
 import { settlementName } from '../content/settlement-names';
@@ -181,9 +183,15 @@ export function agriculture(world: World): void {
     if (season.growth === 0) { field.growth = Math.max(0, field.growth - 0.04); continue; }
     const labour = Math.min(2, workers.get(e.id) ?? 0);
     const p = e.components.position!, soil = world.terrain.biomeAt(p.x, p.y);
-    field.growth = Math.min(1, field.growth + (0.012 + labour * 0.06 * (1 + (e.components.thermal?.wetness ?? 0))) * season.growth * soil.growth);
+    const equipped = (village.economy?.stocks.tools ?? 0) >= 1;
+    field.growth = Math.min(1, field.growth + (0.012 + labour * 0.06 * (equipped ? 1.25 : 1) * (1 + (e.components.thermal?.wetness ?? 0))) * season.growth * soil.growth);
     if (field.growth >= 1 && labour > 0) {
-      village.food = Math.min(2000, village.food + season.yield); village.harvested += season.yield;
+      const grain = marketOf(world, village.id) && (field.grain ?? 0) < 24 ? Math.floor(season.yield * 0.3) : 0;
+      field.grain = Math.min(2000, (field.grain ?? 0) + grain);
+      village.food = Math.min(2000, village.food + season.yield - grain); village.harvested += season.yield;
+      if (equipped) economyOf(village).stocks.tools = Math.max(0, economyOf(village).stocks.tools - 0.15);
+      for (const worker of world.query('citizen', 'position')) if (worker.components.citizen!.task === 'farm' && worker.components.citizen!.targetId === e.id
+        && Math.hypot(worker.components.position!.x - p.x, worker.components.position!.y - p.y) <= 2) recordService(worker, 1);
       field.growth = 0; field.harvests++;
       if (field.harvests === 1) world.announce(`${village.name}: собран первый урожай`);
     }

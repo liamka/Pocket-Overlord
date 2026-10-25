@@ -115,6 +115,21 @@ describe('larger world camera', () => {
     const after = camera.screenToWorld(width / 2, height / 2);
     expect(after.x).toBeCloseTo(before.x); expect(after.y).toBeCloseTo(before.y);
   });
+  it.each([[320, 568], [390, 844], [844, 390]])('fits a phone viewport at %s×%s and can return to that view after zooming', (width, height) => {
+    const camera = new Camera(); camera.width = width; camera.height = height;
+    camera.fit(512, 384);
+    const topLeft = camera.worldToScreen(256 - 384 * 0.435, 192 - 384 * 0.435);
+    const bottomRight = camera.worldToScreen(256 + 384 * 0.435, 192 + 384 * 0.435);
+    expect(topLeft.x).toBeGreaterThan(0); expect(topLeft.y).toBeGreaterThan(0);
+    expect(bottomRight.x).toBeLessThan(width); expect(bottomRight.y).toBeLessThan(height - 200);
+    const fitted = camera.zoom, before = camera.screenToWorld(width / 2, height / 2);
+    camera.zoomAt(3, width / 2, height / 2);
+    expect(camera.zoom).toBeGreaterThan(fitted);
+    camera.zoomAt(1 / 3, width / 2, height / 2);
+    expect(camera.zoom).toBeCloseTo(fitted);
+    const after = camera.screenToWorld(width / 2, height / 2);
+    expect(after.x).toBeCloseTo(before.x); expect(after.y).toBeCloseTo(before.y);
+  });
 });
 
 describe('ocean shelves', () => {

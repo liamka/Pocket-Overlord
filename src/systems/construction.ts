@@ -1,5 +1,6 @@
 import type { Entity, Vec2 } from '../core/types';
 import type { World } from '../core/world';
+import { recordService } from '../core/village-life';
 import { HAMMER_CONTACT, angleDelta, initialResidentAnimation, residentAction } from '../core/resident-animation';
 import { RACES, raceOf } from '../core/races';
 import { aboardFerry } from '../core/ferries';
@@ -83,6 +84,7 @@ export function construction(world: World, dt: number): void {
     const site = house!.components.dwelling!.construction!;
     site.progress = Math.min(1, site.progress + 1 / 12); site.struckAt = world.tick;
     if (site.progress < 1 - 1e-8) continue;
+    recordService(entity, 3);
     delete house!.components.dwelling!.construction;
     for (const worker of world.query('citizen')) if (worker.components.citizen!.task === 'build' && worker.components.citizen!.targetId === house!.id) stop(worker);
     world.visual({ kind: 'build', ...house!.components.position!, radius: 2 });

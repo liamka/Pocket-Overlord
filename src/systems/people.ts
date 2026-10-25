@@ -13,6 +13,9 @@ import { recordResidentMovement } from '../core/resident-animation';
 import { assignConstruction, continueConstruction, startConstruction } from './construction';
 import { emergencyReach, isEmergency } from './emergencies';
 import { rebuildHome } from './recovery';
+import { assignVillageWork, continueVillageWork } from './economy';
+import { assignAnimalCare, continueAnimalCare } from './husbandry';
+import { assignSocializing, continueSocializing } from './integration';
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const endangered = (world: World, p: Vec2): boolean => world.nearby(p, 7).some(e => e.components.explosive || e.components.thermal?.burning);
@@ -84,7 +87,7 @@ export function movement(world: World, dt: number): void {
       if (waypoint) { m!.heading = Math.atan2(waypoint.y - p!.y, waypoint.x - p!.x); speed = Math.min(speed, distance(p!, waypoint) / dt); }
       else {
         const target = world.entities.get(citizen.targetId ?? -1)?.components.position;
-        const reach = citizen.task === 'fight' ? 1.3 : 1.9;
+        const reach = citizen.task === 'fight' || citizen.task === 'guard' ? 1.3 : 1.9;
         if (target && distance(p!, target) > reach && distance(p!, target) < 3) m!.heading = Math.atan2(target.y - p!.y, target.x - p!.x);
         else speed = 0;
       }
@@ -146,6 +149,8 @@ export function settlement(world: World): void {
     const person = entity.components.person!, old = residents.get(person.homeId ?? -1);
     if (old) { const index = old.indexOf(entity); if (index >= 0) old.splice(index, 1); }
     person.homeId = house.id; entity.components.citizen!.villageId = assignHouse(world, house).id;
+    const citizen = entity.components.citizen!;
+    if (citizen.integration && citizen.integration.villageId !== citizen.villageId) delete citizen.integration;
     delete person.displaced;
     const list = residents.get(house.id) ?? []; list.push(entity); residents.set(house.id, list);
   };
@@ -249,6 +254,8 @@ export function intentions(world: World): void {
     if (c.hunger >= 90) world.events.push({ kind: 'damage', target: entity.id, amount: 0.75 });
     if (person.age >= stats.lifespan) { world.events.push({ kind: 'damage', target: entity.id, amount: entity.components.health!.current }); continue; }
     if (isEmergency(entity) || c.task === 'migrate' || aboardFerry(world, entity.id) || waitingForFerry(world, entity)) continue;
+    if (continueSocializing(world, entity)) continue;
+    if (continueAnimalCare(world, entity) || continueVillageWork(world, entity)) continue;
     if (continueConstruction(world, entity)) continue;
     if (continueRepair(world, entity, repairs)) continue;
     if (!world.terrain.isLand(position.x, position.y)) continue;
@@ -256,6 +263,7 @@ export function intentions(world: World): void {
     const current = world.entities.get(c.targetId ?? -1);
     if (current && c.task === 'eat' && village && current.components.dwelling?.villageId === village.id && distance(position, current.components.position!) < 2.4 && village.food >= 1) {
       village.food--; c.hunger = Math.max(0, c.hunger - 45); c.reconsiderIn = 0;
+      if (village.economy) village.economy.stocks.bread = Math.min(village.economy.stocks.bread, village.food);
     }
     if (current && c.task === 'fight' && atWar(world, c.villageId, current.components.citizen?.villageId ?? current.components.dwelling?.villageId ?? null)
       && distance(position, current.components.position!) <= (current.components.dwelling ? 2.3 : 1.5) && c.attackIn <= 0 && !endangered(world, position)) {
@@ -278,7 +286,7 @@ export function intentions(world: World): void {
     }
     if (!target) {
       const formerField = c.task === 'farm' ? c.targetId : null;
-      if (assignConstruction(world, entity) || assignRepair(world, entity, repairs)) {
+      if (assignSocializing(world, entity) || assignAnimalCare(world, entity) || assignConstruction(world, entity) || assignRepair(world, entity, repairs) || assignVillageWork(world, entity)) {
         if (formerField !== null) assignments.set(formerField, Math.max(0, (assignments.get(formerField) ?? 0) - 1));
         continue;
       }

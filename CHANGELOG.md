@@ -1,5 +1,22 @@
 # Changelog
 
+- [#298] Add seven fantasy biomes with distinct vegetation, terrain, seed brushes and localized world selection.
+- [#297] Show population counts for each race in the world overview.
+- [#296] Add land raising and lowering brushes with animated earth, splashes and shoreline foam.
+- [#295] Add village markets, grain-to-bread production, woodworking and physical deliveries of goods.
+- [#294] Add an isolated icon workshop with redrawn pixel icons, size controls, and current-design comparisons.
+- [#293] Match the Buildings tab to the monochrome pixel icons of the other tabs.
+- [#292] Add sheep husbandry, owner-following guard dogs and livestock protection from wolves.
+- [#291] Add mobile touch controls, pinch zoom, on-screen kaiju controls and responsive phone layouts.
+- [#290] Elect village elders by service and replace them as hunger and war losses erode public trust.
+- [#289] Remove Crystal seeds and Candy seeds from the tool panel.
+- [#288] Clarify land tools with a raised island plus icon and a flooded ground minus icon.
+- [#287] Skip tests in the GitHub Pages deployment workflow.
+- [#286] Move harbor and ship tools into a dedicated Buildings tab.
+- [#285] Remove the icon workshop page and its unused interface designs.
+- [#284] Remove the achievements feature and its interface
+- [#283] Apply the approved land, people, ship, and destruction icons with larger toolbar artwork.
+- [#282] Let newcomers build local friendships, settle through housing and work, or move on together when isolated
 - [#281] Shape new roads with gentle bends instead of long right-angle turns while preserving continuous routes around obstacles
 - [#280] Make dragons strafe close to the ground, breathe fire downward and leave continuous burning trails.
 - [#279] Replace the settings symbol with a recognizable eight-tooth pixel gear.
