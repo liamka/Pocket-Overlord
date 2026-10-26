@@ -93,4 +93,19 @@ export function registerTerraforming(registry: Registry): void {
     },
     apply: (world, p) => shapeLand(world, p, mode),
   });
+  const eraseRadius = 3;
+  const inBrush = (point: Vec2, target: Vec2): boolean => Math.hypot(target.x - point.x, target.y - point.y) <= eraseRadius;
+  registry.registerTool({
+    id: 'core:erase-objects', category: 'biomes', label: 'Erase objects',
+    hint: 'Click or drag to erase creatures, buildings and objects within the brush.',
+    paintHint: 'Wheel: zoom · Left-drag: erase objects · Right-drag: pan',
+    radius: eraseRadius, color: '#f0b6ad', paint: true, continuous: true,
+    canApply: (world, p) => world.nearby(p, eraseRadius).length > 0
+      || world.equipment.items.some(item => item.location.kind === 'ground' && inBrush(p, item.location)),
+    apply: (world, p) => {
+      for (const entity of world.nearby(p, eraseRadius).sort((a, b) => a.id - b.id)) world.remove(entity.id);
+      // Removal releases possessions onto the ground; erase those in the same stroke.
+      world.equipment.items = world.equipment.items.filter(item => item.location.kind !== 'ground' || !inBrush(p, item.location));
+    },
+  });
 }

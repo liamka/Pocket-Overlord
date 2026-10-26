@@ -36,9 +36,9 @@ describe('settlement recovery', () => {
     advance(world, 2);
     const rebuilt = [...world.query('dwelling')][0];
     expect(rebuilt.components.position).toEqual(house.components.position);
-    expect(rebuilt.components.dwelling!.construction).toBeDefined(); expect([...world.query('ruin')]).toHaveLength(0);
+    expect(rebuilt.components.building!.project).toBeDefined(); expect([...world.query('ruin')]).toHaveLength(0);
     expect(resident.components.person!.homeId).toBe(rebuilt.id); expect(resident.components.person!.displaced).toBeUndefined();
-    advance(world, 16); expect(rebuilt.components.dwelling!.construction).toBeUndefined();
+    advance(world, 16); expect(rebuilt.components.building!.project).toBeUndefined();
     expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
   });
 

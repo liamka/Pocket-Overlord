@@ -5,7 +5,7 @@ import { decodeSave } from '../src/persistence/schema';
 import { agriculture, assignHouse, villages } from '../src/systems/society';
 import { intentions } from '../src/systems/people';
 import { dispatchCaravan } from '../src/systems/caravans';
-import { advance, diplomaticWorld, flatWorld } from './helpers';
+import { setFood, advance, diplomaticWorld, flatWorld } from './helpers';
 
 function farmWorld(tick: number) {
   const world = flatWorld(), home = world.spawn('core:house', { x: 20, y: 20 })!;
@@ -46,7 +46,7 @@ describe('seasons and food reserves', () => {
   it('consumes stored food in winter and increases hunger without creating supplies', () => {
     const scene = farmWorld(5400), c = scene.worker.components.citizen!;
     Object.assign(scene.worker.components.position!, { x: 22, y: 20 }); scene.world.spatial.update(scene.worker);
-    Object.assign(c, { task: 'eat', targetId: scene.home.id, hunger: 60 }); scene.village.food = 1;
+    Object.assign(c, { task: 'eat', targetId: scene.home.id, hunger: 60 }); setFood(scene.village, 1);
     intentions(scene.world);
     expect(scene.village.food).toBe(0); expect(c.hunger).toBeCloseTo(15.66);
     c.hunger = 89.9; intentions(scene.world);
@@ -59,8 +59,8 @@ describe('seasons and food reserves', () => {
       const world = diplomaticWorld(2); world.tick = tick;
       const from = world.society.villages[0], reserve = foodReserve(tick, 4);
       expect(reserve).toBeGreaterThan(foodReserve(0, 4));
-      from.food = reserve; expect(dispatchCaravan(world, 1, 2)).toBe(false);
-      from.food += 3; expect(dispatchCaravan(world, 1, 2)).toBe(true);
+      setFood(from, reserve); expect(dispatchCaravan(world, 1, 2)).toBe(false);
+      setFood(from, from.food + 3); expect(dispatchCaravan(world, 1, 2)).toBe(true);
       expect(from.food).toBe(reserve); expect([...world.query('caravan')][0].components.caravan!.food).toBe(3);
     }
   });

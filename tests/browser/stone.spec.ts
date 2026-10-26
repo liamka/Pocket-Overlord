@@ -1,3 +1,5 @@
+import { createItem } from '../../src/core/equipment';
+import { initializeStorage } from '../../src/core/stockpiles';
 import { expect, test } from '@playwright/test';
 import { flatWorld } from '../helpers';
 import { assignHouse } from '../../src/systems/society';
@@ -10,8 +12,11 @@ test('stone is available in the real toolbar and stock, upgrades and weapons sur
   Object.assign(home.components.dwelling!, { level: 2, capacity: 7 }); home.components.health = { current: 300, max: 300 };
   const resident = world.spawn('core:person', { x: 22, y: 23 })!;
   resident.components.person!.homeId = home.id;
-  Object.assign(resident.components.citizen!, { villageId: village.id, weapon: 'stone-axe' });
-  Object.assign(economyOf(village).stocks, { stone: 12, stoneAxes: 2 });
+  Object.assign(resident.components.citizen!, { villageId: village.id });
+  Object.assign(economyOf(village).stocks, { stone: 12 });
+  initializeStorage(world, village);
+  createItem(world, 'stone-axe', { kind: 'equipped', entityId: resident.id });
+  for (let n = 0; n < 2; n++) createItem(world, 'stone-axe', { kind: 'stored', buildingId: village.economy!.storage![0].buildingId });
   world.spawn('core:stone', { x: 30, y: 24 }); world.paused = true;
   await page.route('**/stone-storage-fixture', route => route.fulfill({ contentType: 'text/html', body: '<title>Storage fixture</title>' }));
   await page.goto('/stone-storage-fixture');
@@ -64,7 +69,7 @@ test('mining, stone cargo, axes and upgraded homes have distinct visible sprites
     const previews: string[] = [];
     const draws = [
       () => drawSprite(ctx, 'house'), () => drawStoneHouse(ctx, house, 0),
-      () => { house.components.dwelling.construction = { progress: 0.5, struckAt: 0, upgrade: true }; drawConstruction(ctx, house, 0); },
+      () => { house.components.building.project = { action: 'upgrade', paid: true, cost: { stone: 8, wood: 2, commonMetal: 2 }, progress: 0.5, struckAt: 0 }; drawConstruction(ctx, house, 0); },
       () => drawSprite(ctx, world.registry.entities.get('core:stone').sprite),
       () => drawResidentSprite(ctx, { action: 'repair', tool: 'pickaxe', work: 0.43 }),
       () => drawResidentSprite(ctx, { action: 'carry', load: 'stone' }),

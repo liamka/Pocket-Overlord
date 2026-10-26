@@ -1,5 +1,10 @@
 import type { World } from './world';
 
+// Derived cache invalidation, never simulation state. Loading builds a new world's route cache.
+const revisions = new WeakMap<World, number>();
+export const hazardRevision = (world: World): number => revisions.get(world) ?? 0;
+export const markHazardsChanged = (world: World): void => { revisions.set(world, hazardRevision(world) + 1); };
+
 export const GEOHAZARDS = { id: 'core:geohazards', acids: 64, lava: 160, bombs: 64, flows: 32 } as const;
 export const ACID = { id: 'core:acid', radius: 3.2, life: 9, damage: 28 } as const;
 export const VOLCANO = { id: 'core:volcano', limit: 12, grow: 2, period: 10, lavaLife: 12, damage: 48 } as const;

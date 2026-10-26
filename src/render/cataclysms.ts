@@ -1,3 +1,7 @@
+import { phenotypeColors } from '../core/phenotypes';
+import { plagueSeverity } from '../core/afflictions';
+import { drawAppearanceOverlay, drawBurningOverlay } from './appearance';
+import { isAdult } from '../core/unit-stats';
 import { CATACLYSMS, GRAVITY, cataclysms, ease, tornadoStrength, tornadoCaptivePose, gravityCaptivePose,
   type BloodTornado, type GravityClap, type LiftedPose, type CataclysmBurst } from '../core/cataclysms';
 import { noise } from '../core/random';
@@ -56,7 +60,9 @@ function airborneResident(ctx: CanvasRenderingContext2D, world: World, id: numbe
   ctx.rotate(pose.angle); ctx.scale(pose.scale, pose.scale); ctx.translate(0, 5);
   const owner = entity.components.citizen?.villageId;
   drawResidentSprite(ctx, { time: time * 1.1 + id, action: 'swim', heading: pose.angle, race: raceOf(entity),
-    child: person.age < 18, variant: entity.components.appearance?.variant, color: owner ? villageColor(owner) : undefined });
+    body: phenotypeColors(entity), sickness: plagueSeverity(entity), child: !isAdult(entity), variant: entity.components.appearance?.variant, color: owner ? villageColor(owner) : undefined });
+  drawAppearanceOverlay(ctx, entity, world.tick / 30);
+  if (entity.components.thermal?.burning) drawBurningOverlay(ctx, 0, 0, world.tick / 30 + entity.id);
   ctx.restore();
 }
 

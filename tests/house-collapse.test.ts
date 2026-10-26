@@ -10,7 +10,7 @@ describe('destroyed homes', () => {
   it.each(RACE_IDS)('captures the %s home once and immediately releases residents and builders', race => {
     const world = flatWorld(), house = world.spawn('core:house', { x: 24, y: 24 })!;
     house.components.dwelling!.race = race;
-    house.components.dwelling!.construction = { progress: 0.5, struckAt: 0 };
+    house.components.building!.project = { action: 'build', paid: true, cost: {}, progress: 0.5, struckAt: 0 };
     const person = world.spawn('core:person', { x: 22, y: 24 })!;
     person.components.person!.homeId = house.id;
     Object.assign(person.components.citizen!, { task: 'build', targetId: house.id, path: [{ x: 22, y: 24 }] });
@@ -22,9 +22,10 @@ describe('destroyed homes', () => {
     expect(world.visuals).toHaveLength(1);
     const visual = world.visuals[0]; expect(visual.kind).toBe('collapse');
     if (visual.kind !== 'collapse') throw new Error('Missing collapse');
-    expect(visual.house.components.dwelling).toMatchObject({ race, construction: { progress: 0.5 } });
-    house.components.dwelling!.construction!.progress = 1;
-    expect(visual.house.components.dwelling!.construction!.progress).toBe(0.5);
+    expect(visual.house.components.dwelling).toMatchObject({ race });
+    expect(visual.house.components.building!.project).toMatchObject({ progress: 0.5 });
+    house.components.building!.project!.progress = 1;
+    expect(visual.house.components.building!.project!.progress).toBe(0.5);
     expect(world.houseCount).toBe(0); expect(world.entities.has(house.id)).toBe(false);
     expect(world.canStand({ x: 24, y: 24 }, 1)).toBe(true);
     expect(person.components.person!.homeId).toBe(null);

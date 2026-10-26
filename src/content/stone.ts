@@ -1,13 +1,9 @@
 import type { PixelSprite, Registry } from './registry';
 import type { World } from '../core/world';
 import { Terrain, type Vec2 } from '../core/types';
-import { integer } from '../core/validation';
 import { Random } from '../core/random';
-import { STONE } from '../core/stone';
-
-declare module '../core/types' {
-  interface ComponentMap { stone: { remaining: number } }
-}
+import { cleanDepositClaims, newDeposit, STONE_BIOMES, validDeposit } from '../core/deposits';
+import { NaturalBiome } from '../core/natural-biomes';
 
 const sprite: PixelSprite = {
   pixels: [
@@ -39,24 +35,29 @@ export function seedStone(world: World): void {
   const attempts = Math.floor(width * height / 240);
   for (let i = 0; i < attempts; i++) {
     const p = { x: rng.range(1, width - 1), y: rng.range(1, height - 1) };
-    if (canPlace(world, p)) world.spawn('core:stone', p);
+    if (STONE_BIOMES.includes(world.terrain.biomeAt(p.x, p.y).id) && canPlace(world, p)) world.spawn('core:stone', p);
   }
 }
 
 export function registerStone(registry: Registry): void {
-  registry.registerComponent('stone', v => integer(v.remaining, 1, STONE.deposit));
+  registry.registerComponent('stone', validDeposit);
   registry.registerEntity({ id: 'core:stone', sprite, create: p => ({
-    position: { ...p }, health: { current: 120, max: 120 }, solid: { radius: 0.65 }, stone: { remaining: STONE.deposit },
+    position: { ...p }, health: { current: 120, max: 120 }, solid: { radius: 0.65 }, stone: newDeposit(NaturalBiome.Grassland),
   }) });
   registry.registerTool({ id: 'core:stone', category: 'nature', label: 'Stone', icon: sprite, radius: 0.7, color: '#bbc4bd',
-    hint: 'Place a stone deposit. Residents mine it for stronger homes and stone axes.', canApply: canPlace,
+    hint: 'Place a stone deposit. Residents mine it for buildings and stone weapons.', canApply: canPlace,
     apply: (world, p) => {
       if (!canPlace(world, p)) return 'Place stone on clear, dry land';
-      if (!world.spawn('core:stone', p)) return 'В мире слишком много объектов';
+      const source = world.spawn('core:stone', p);
+      if (!source) return 'В мире слишком много объектов';
+      source.components.stone!.origin = 'placed';
     },
   });
   registry.registerSystem({ id: 'core:stone-deposits', after: ['core:landscape'], before: ['core:ferries'], update: world => {
     if (world.tick % 30 !== 0) return;
-    for (const e of world.query('stone', 'position')) if (!world.terrain.isLand(e.components.position!.x, e.components.position!.y)) world.remove(e.id);
+    for (const e of world.query('stone', 'position')) {
+      cleanDepositClaims(world, e);
+      if (!world.terrain.isLand(e.components.position!.x, e.components.position!.y)) world.remove(e.id);
+    }
   } });
 }

@@ -44,14 +44,14 @@ test('the real renderer shows staged construction, freezes a hammer stroke on pa
     renderer.resize(); renderer.camera.x = 24; renderer.camera.y = 24; renderer.camera.zoom = 4;
     renderer.draw(world, 0); const foundation = canvas.toDataURL();
     for (let i = 0; i < 75; i++) { world.step(); renderer.draw(world, (i + 1) * 1000 / 30); }
-    const frame = canvas.toDataURL(), progress = house.components.dwelling.construction.progress;
+    const frame = canvas.toDataURL(), progress = house.components.building.project.progress;
     world.paused = true; const saved = JSON.stringify(world.snapshot());
     renderer.draw(world, 7000); const frozen = frame === canvas.toDataURL();
     const unchanged = saved === JSON.stringify(world.snapshot());
     world = new World(world.seed, world.registry, decodeSave(JSON.parse(saved), world.registry));
     renderer.draw(world, 8000); const restored = frame === canvas.toDataURL();
     world.paused = false; for (let i = 0; i < 450; i++) { world.step(); renderer.draw(world, 8000 + (i + 1) * 1000 / 30); }
-    return { animated: foundation !== frame, progress, frozen, unchanged, restored, complete: !world.entities.get(house.id).components.dwelling.construction,
+    return { animated: foundation !== frame, progress, frozen, unchanged, restored, complete: !world.entities.get(house.id).components.building.project,
       finalChanged: frame !== canvas.toDataURL(), task: world.entities.get(worker.id).components.citizen.task };
   });
   expect(result.animated).toBe(true); expect(result.progress).toBeGreaterThan(0); expect(result.progress).toBeLessThan(1);
@@ -86,7 +86,7 @@ test('a saved active building site resumes through the game controls and finishe
     const open = indexedDB.open('little-world', 1); open.onerror = () => reject(open.error);
     open.onsuccess = () => {
       const db = open.result, read = db.transaction('worlds').objectStore('worlds').get('last');
-      read.onsuccess = () => { const house = read.result.entities.find((e: { id: number }) => e.id === houseId); db.close(); resolve(!!house && !house.components.dwelling.construction); };
+      read.onsuccess = () => { const house = read.result.entities.find((e: { id: number }) => e.id === houseId); db.close(); resolve(!!house && !house.components.building.project); };
       read.onerror = () => reject(read.error);
     };
   }), ids.house), { timeout: 25000 }).toBe(true);

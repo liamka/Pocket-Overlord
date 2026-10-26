@@ -1,16 +1,29 @@
+import { currencyVillageLines } from './ui/currency';
+import { canUseWorldEditors } from './core/world-rules';
+import { WorldLawsPanel } from './ui/world-laws';
+import { TileInspector } from './ui/tiles';
+import { isAdult } from './core/unit-stats';
+import { equippedItem } from './core/equipment';
+import { EquipmentInspector } from './ui/equipment';
+import { CreatureInspector } from './ui/creatures';
+import { UnitInspector } from './ui/units';
+import { forestVillageLines, resourceVillageLines } from './render/resources';
+import { territoryLines } from './render/territory';
 import type { Registry, ToolDefinition } from './content/registry';
 import type { World } from './core/world';
 import { BIOMES, type BiomeId } from './core/biomes';
 import { NATURAL_BIOMES, type NaturalBiome } from './core/natural-biomes';
 import { drawToolIcon, villageColor } from './render/sprites';
 import { paintToolIcon } from './render/tool-icons';
-import { residentName } from './core/village-life';
+import { economyOf, residentName } from './core/village-life';
+import { FOREST_POLICIES, type ForestPolicy } from './core/forestry';
 import { allianceGroups, sideName } from './core/diplomacy';
 import { isLanguage, languages, loadLanguage, saveLanguage, translate } from './i18n';
 import { roadIsIntact } from './core/roads';
 import { SIMULATION_SPEEDS, speedLabel, type SimulationSpeed } from './core/types';
 import { version as projectVersion } from '../package.json';
 import { seasonAt, yearAt } from './core/seasons';
+import { calendarDate } from './ui/calendar';
 import { localizedSettlementName, settlementTextLocalizer } from './content/settlement-names';
 import { RACES, RACE_IDS, raceOf } from './core/races';
 import { generateTerrain } from './core/terrain';
@@ -32,6 +45,7 @@ const icons = {
   home: '<path fill="#af633e" d="M10 3h4v2h3v3h3v3h2v3H2v-3h2V8h3V5h3z"/><path fill="#e0bf78" d="M5 13h14v8H5z"/><path fill="#6c4b33" d="M10 15h4v6h-4z"/><path fill="#e59a50" d="M10 3h4v2H9v3H6v3H3v2H2v-2h2V8h3V5h3z"/><path fill="#81b8c1" d="M6 15h3v3H6zm9 0h3v3h-3z"/>',
   mountain: '<path fill="currentColor" d="M1 18v-3h2v-3h2V9h2V6h3v3h2V7h2V4h3v3h2v3h2v3h2v5z"/><path fill="#738070" d="M7 9h2v3h2v3h2v3h-3v-3H8v-3H6zm8-2h2v3h2v3h2v3h-3v-3h-2v-3h-2z"/>',
   cloud: '<path fill="currentColor" d="M7 3h8v2h4v3h3v7H2V8h3V5h2zM5 17h2v4H5zm6 1h2v5h-2zm6-1h2v4h-2z"/>',
+  leaf: '<path fill="currentColor" fill-rule="evenodd" d="M16 2h6v6h-2v4h-2v2h-2v2h-2v2H8v2H6v2H2v-2h2v-2h2v-2H4v-6h2V8h2V6h4V4h4zM16 6h2v2h-2v2h-2v2h-2v2h-2v2H8v-2h2v-2h2v-2h2V8h2z"/>',
   destruction: '<path fill="currentColor" fill-rule="evenodd" d="M7 2h10v2h3v3h2v8h-3v3h-2v4H7v-4H5v-3H2V7h2V4h3zM5 8v4h5V8zm9 0v4h5V8zm-3 5v3h2v-3zM9 18v4h2v-4zm4 0v4h2v-4z"/>',
   clock: '<path fill="#9b752d" d="M5 2h14v3H5zm2 3h10v4h-2v2h-2v2h2v2h2v4h2v3H5v-3h2v-4h2v-2h2v-2H9V9H7z"/><path fill="#f4d378" d="M6 2h12v2H6zm2 4h8v2h-2v2h-4V8H8zm2 9h4v2h2v2H8v-2h2zM6 20h12v1H6z"/>',
 };
@@ -62,9 +76,9 @@ function speedDigits(speed: SimulationSpeed): string {
 
 const categories: { id: string; label: string; icon: keyof typeof icons }[] = [
   { id: 'biomes', label: 'Biomes', icon: 'mountain' },
+  { id: 'nature', label: 'Природа', icon: 'leaf' },
   { id: 'people', label: 'Peoples and creatures', icon: 'person' },
   { id: 'buildings', label: 'Buildings', icon: 'buildings' },
-  { id: 'nature', label: 'Природа', icon: 'cloud' },
   { id: 'destruction', label: 'Разрушение', icon: 'destruction' },
 ];
 // Preserve the original key so renaming the game keeps existing tool preferences.
@@ -72,6 +86,11 @@ const SELECTED_TOOL_KEY = 'pocket-world.selected-tool';
 const populationLabels = { human: 'Humans', elf: 'Elves', orc: 'Orcs', dwarf: 'Dwarves' };
 
 export class UI {
+  readonly equipmentInspector: EquipmentInspector;
+  readonly creatureInspector: CreatureInspector;
+  readonly unitInspector: UnitInspector;
+  readonly worldLawsPanel: WorldLawsPanel;
+  readonly tileInspector: TileInspector;
   readonly canvas: HTMLCanvasElement;
   readonly dialog: HTMLDialogElement;
   readonly settingsDialog: HTMLDialogElement;
@@ -85,6 +104,8 @@ export class UI {
   readonly timeButtons: HTMLButtonElement[];
   private readonly speedMenu: HTMLElement;
   private timeReady = false;
+  private timeState = '';
+  private readonly renderedHTML = new WeakMap<HTMLElement, string>();
   private worldSeed = 0;
   private readonly seedInput: HTMLInputElement;
   get newWorldSeed(): number { return this.worldSeed; }
@@ -99,6 +120,8 @@ export class UI {
   private staticText: { node: Text; source: string }[] = [];
   private staticAttributes: { element: Element; attribute: string; source: string }[] = [];
   private lastWorld: World | undefined;
+  private editorsVisible = false;
+  private readonly selectTool: (id: string) => void;
   private lastZoom = 1;
   private savedText = 'Загрузка мира…';
   private saveHadError = false;
@@ -113,19 +136,30 @@ export class UI {
       const saved = localStorage.getItem(SELECTED_TOOL_KEY);
       if (saved && registry.tools.has(saved)) this.selectedTool = saved;
     } catch { /* Keep the default when browser storage is unavailable. */ }
+    this.selectTool = select;
+    if (!debugMode && this.selectedTool === 'core:inspect') this.selectedTool = 'core:human';
     this.category = this.currentTool.category ?? 'nature';
     const availableCategories = categories.filter(category => [...registry.tools.values()].some(tool => (tool.category ?? 'nature') === category.id));
     this.root = document.querySelector('#app')!;
+    this.root.addEventListener('change', event => {
+      const select = event.target;
+      if (!this.debugMode || !(select instanceof HTMLSelectElement) || !select.matches('[data-forest-policy]') || !Object.hasOwn(FOREST_POLICIES, select.value)) return;
+      const village = this.lastWorld?.society.villages.find(v => v.id === Number(select.dataset.forestPolicy));
+      if (village) { economyOf(village).forestPolicy = select.value as ForestPolicy; delete economyOf(village).forestProblem; select.blur(); }
+    });
     this.root.classList.toggle('touch-input', this.touchInput);
     this.root.innerHTML = `
       <canvas id="world" aria-label="Карта острова. Выберите инструмент и щёлкните по карте." tabindex="0"></canvas>
       <aside class="world-overview" aria-label="Статистика мира">
         <div class="world-stats" aria-label="Состояние мира">
-          <div class="world-age">${icon('clock')}<span id="world-age">День 1</span><span class="live-dot"></span></div>
+          <details class="calendar"><summary class="world-age" aria-describedby="calendar-help">${icon('clock')}<span id="world-age"></span><span class="live-dot"></span></summary><p id="calendar-help"></p></details>
           <div class="season-status"><span id="season-name">Spring</span><span id="season-year">Year 1</span></div>
           <div class="stat">${icon('person')}<span>жителей</span><strong id="population">0</strong></div>
           ${RACE_IDS.map(race => `<div class="stat race-population"><span>${populationLabels[race]}</span><strong id="population-${race}">0</strong></div>`).join('')}
           <div class="stat">${icon('home')}<span>домов</span><strong id="houses">0</strong></div>
+          <button id="equipment-open" type="button"${debugMode ? '' : ' hidden'}>Equipment</button>
+          <button id="creature-open" type="button"${debugMode ? '' : ' hidden'}>Creature catalogue</button>
+          <button id="units-open" type="button" aria-controls="unit-panel"${debugMode ? '' : ' hidden'}>Units and favorites</button>
           <div class="stat food-stocks"><span>Food reserves</span><strong id="food-stocks">0</strong></div>
           <span class="save-status" id="save-status" role="status">Загрузка мира…</span>
         </div>
@@ -146,15 +180,16 @@ export class UI {
         </div>
       </section>
       <div class="playback-panel">
-        <div id="speed-menu" class="speed-menu" role="menu" aria-label="Скорость игры" hidden>${SIMULATION_SPEEDS.map(speed => `<button class="speed-option" role="menuitemradio" data-speed="${speed}" aria-label="${speedLabel(speed)}" aria-checked="${speed === 1}" tabindex="-1"${speed === 1 || speed === 2 || speed === 4 ? ` aria-keyshortcuts="${speed === 1 ? 2 : speed === 2 ? 3 : 4}"` : ''}><span>${speedLabel(speed)}</span><span class="speed-description">${speed === 0.2 ? 'медленно' : speed === 1 ? 'обычно' : speed === SIMULATION_SPEEDS.at(-1) ? 'максимум' : ''}</span></button>`).join('')}</div>
+        <div id="speed-menu" class="speed-menu" role="menu" aria-label="Скорость игры" hidden>${SIMULATION_SPEEDS.map(speed => `<button class="speed-option" role="menuitemradio" data-speed="${speed}" aria-label="${speedLabel(speed)}" aria-checked="${speed === 1}" tabindex="-1"><span>${speedLabel(speed)}</span><span class="speed-description">${speed === 0.2 ? 'медленно' : speed === 1 ? 'обычно' : speed === SIMULATION_SPEEDS.at(-1) ? 'максимум' : ''}</span></button>`).join('')}</div>
         <div class="speed-controls" role="group" aria-label="Скорость игры">
-          <button id="time-toggle" class="pixel-button time-button time-toggle" aria-label="Стоп" aria-pressed="false" aria-keyshortcuts="Space 1" title="Остановить время · Пробел"><span class="time-play-icon">${icon('play')}</span><span class="time-pause-icon">${icon('pause')}</span></button>
+          <button id="time-toggle" class="pixel-button time-button time-toggle" aria-label="Стоп" aria-pressed="false" aria-keyshortcuts="Space" title="Остановить время · Пробел"><span class="time-play-icon">${icon('play')}</span><span class="time-pause-icon">${icon('pause')}</span></button>
           <button id="time-slower" class="pixel-button time-button time-arrow" aria-label="Уменьшить скорость" title="Уменьшить скорость">${icon('slower')}</button>
           <button id="speed-picker" class="pixel-button time-button speed-picker" aria-label="Выбрать скорость" aria-describedby="speed-value" aria-haspopup="menu" aria-controls="speed-menu" aria-expanded="false" title="Выбрать скорость"><span id="speed-value" class="speed-value">${speedDigits(1)}</span></button>
           <button id="time-faster" class="pixel-button time-button time-arrow" aria-label="Увеличить скорость" title="Увеличить скорость">${icon('faster')}</button>
         </div>
       </div>
       <small id="project-version" class="project-version" translate="no">ver ${projectVersion}</small>
+      <small id="fps-counter" class="fps-counter" translate="no">FPS 0</small>
       <div id="touch-controls" class="touch-controls" role="group" aria-label="Movement controls" hidden>
         <div class="touch-directions">
           <button class="pixel-button" data-control="KeyW" aria-label="Move up" aria-pressed="false"><span aria-hidden="true">↑</span></button>
@@ -166,13 +201,21 @@ export class UI {
       </div>
       <dialog id="new-dialog" aria-labelledby="new-title"><div class="dialog-symbol">${icon('globe')}</div><h2 id="new-title">Начать новый мир?</h2><p id="new-description">На месте этого острова появится новый. Текущий мир будет заменён.</p>
         <div class="seed-setting"><label class="settings-label" for="world-seed">World seed</label><div class="seed-controls"><input id="world-seed" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="seed-hint seed-error"><button id="randomize-seed" class="secondary" type="button">Randomize</button></div><p id="seed-error" class="seed-error" role="alert" hidden>Enter a whole number from 0 to 4294967295.</p><p id="seed-hint" class="seed-hint">Use the same world settings to recreate this map.</p></div>
-        <div class="new-world-options"><div><label class="settings-label" for="nature-select">Nature</label><select id="nature-select" name="nature"><option value="">Mixed biomes</option>${NATURAL_BIOMES.map(biome => `<option value="${biome.key}">${escapeText(biome.name)}</option>`).join('')}</select>
+        <div class="new-world-options"><div><label class="settings-label" for="nature-select">Nature</label><select id="nature-select" name="nature">${NATURAL_BIOMES.filter(biome => biome.key !== 'paradox').map(biome => `<option value="${biome.key}">${escapeText(biome.name)}</option>`).join('')}</select>
         ${debugMode ? `<label class="settings-label" for="biome-select">Island shape</label><select id="biome-select" name="biome"><option value="">Random</option>${BIOMES.map(biome => `<option value="${biome.id}">${escapeText(biome.name)}</option>`).join('')}</select>` : ''}</div><figure class="world-preview"><figcaption>Preview</figcaption><canvas id="world-preview" width="128" height="96" role="img" aria-label="Preview of the new island"></canvas></figure></div><div class="dialog-actions"><button class="secondary" type="button" value="cancel" autofocus>Оставить этот</button><button id="confirm-new" class="primary" type="button" value="new">Создать мир</button></div></dialog>`;
     this.root.insertAdjacentHTML('beforeend', `<dialog id="settings-dialog" aria-labelledby="settings-title"><form method="dialog"><div class="dialog-symbol">${icon('settings')}</div><h2 id="settings-title">Настройки</h2><label class="settings-label" for="language-select">Язык</label><select id="language-select" name="language">${languages.map(language => `<option value="${language.id}" lang="${language.id}">${language.name}</option>`).join('')}</select><p id="language-warning" class="language-warning" role="status" hidden>Не удалось запомнить язык. Выбор действует до перезагрузки страницы.</p><div class="dialog-actions"><button id="new-world" class="secondary" type="button">${icon('globe')}<span>New world</span></button><button class="primary" value="done">Готово</button></div></form></dialog>`);
+    this.equipmentInspector = new EquipmentInspector(this.root, this.get('#equipment-open'));
+    this.creatureInspector = new CreatureInspector(this.root, this.get('#creature-open'));
+    this.unitInspector = new UnitInspector(this.root, this.get('#units-open'), id => this.equipmentInspector.openFor(id));
     this.canvas = this.get('#world'); this.dialog = this.get('#new-dialog'); this.settingsDialog = this.get('#settings-dialog');
-    new ResizeObserver(([entry]) => {
-      this.root.style.setProperty('--tool-panel-height', `${entry.borderBoxSize[0].blockSize}px`);
-    }).observe(this.get('.panel-content'));
+    const panelObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const property = entry.target.classList.contains('game-panel') ? '--game-panel-height' : '--tool-panel-height';
+        this.root.style.setProperty(property, `${entry.borderBoxSize[0].blockSize}px`);
+      }
+    });
+    panelObserver.observe(this.get('.panel-content'));
+    panelObserver.observe(this.get('.game-panel'));
     this.touchControls = this.get('#touch-controls');
     document.addEventListener('pointerdown', event => {
       if (event.pointerType === 'touch' && !this.touchInput) {
@@ -181,6 +224,9 @@ export class UI {
     });
     this.get('#settings-dialog .dialog-actions').insertAdjacentHTML('beforebegin', `<div class="seed-setting"><label class="settings-label" for="current-world-seed">World seed</label><div class="seed-controls"><input id="current-world-seed" type="text" readonly><button id="copy-seed" class="secondary" type="button">Copy seed</button></div><p id="seed-copy-status" class="seed-hint" role="status" hidden></p></div>`);
     this.newWorld = this.get('#new-world'); this.confirmNew = this.get('#confirm-new');
+    if (debugMode) this.get('#settings-dialog .dialog-actions').insertAdjacentHTML('beforebegin', '<section id="forest-settings" hidden></section>');
+    this.worldLawsPanel = new WorldLawsPanel(this.root, this.settingsDialog, debugMode);
+    this.tileInspector = new TileInspector(this.root);
     this.undo = this.get('#undo');
     const undoControl = this.get('#undo-control'), undoTooltip = this.get('#undo-tooltip');
     let undoHovered = false;
@@ -267,7 +313,9 @@ export class UI {
     this.get('#settings').addEventListener('click', () => {
       this.get('#seed-copy-status').hidden = true;
       this.settingsDialog.showModal();
+      if (this.lastWorld) this.updateSociety(this.lastWorld);
     });
+    this.get('#society-panel').addEventListener('toggle', () => { if (this.lastWorld) this.updateSociety(this.lastWorld); });
     const languageSelect = this.get<HTMLSelectElement>('#language-select');
     languageSelect.value = this.language;
     languageSelect.addEventListener('change', () => {
@@ -366,6 +414,9 @@ export class UI {
     retry.focus({ preventScroll: true });
   }
   private updateTime(world: World): void {
+    const state = `${world.paused}:${world.speed}:${this.language}:${this.touchInput}:${this.timeReady}`;
+    if (state === this.timeState) return;
+    this.timeState = state;
     this.timeToggle.setAttribute('aria-pressed', String(world.paused));
     this.timeToggle.setAttribute('aria-label', this.tr(world.paused ? 'Старт' : 'Стоп'));
     this.timeToggle.title = this.tr(this.touchInput ? world.paused ? 'Старт' : 'Стоп' : world.paused ? 'Продолжить время · Пробел' : 'Остановить время · Пробел');
@@ -401,57 +452,118 @@ export class UI {
   }
   private updateCategory(): void {
     for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-category]')) button.setAttribute('aria-pressed', String(button.dataset.category === this.category));
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-tool]')) button.hidden = (this.registry.tools.get(button.dataset.tool!)?.category ?? 'nature') !== this.category;
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-tool]')) button.hidden = (this.registry.tools.get(button.dataset.tool!)?.category ?? 'nature') !== this.category
+      || button.dataset.tool === 'core:inspect' && !this.debugMode && !this.editorsVisible;
+  }
+  private setText(selector: string, value: string): void {
+    const element = this.get(selector);
+    if (element.textContent !== value) element.textContent = value;
+  }
+  private setHidden(selector: string, hidden: boolean): void {
+    const element = this.get(selector);
+    if (element.hidden !== hidden) element.hidden = hidden;
+  }
+  private setAttribute(selector: string, name: string, value: string): void {
+    const element = this.get(selector);
+    if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+  }
+  updateFPS(fps: number): void { this.setText('#fps-counter', `FPS ${fps}`); }
+  updateZoom(zoom: number): void {
+    this.lastZoom = zoom;
+    const value = `${Math.round(zoom * 100)}%`, output = this.get('#zoom-value');
+    if (output.textContent !== value) output.textContent = value;
   }
   update(world: World, zoom: number): void {
     if (this.lastWorld !== world) this.get<HTMLInputElement>('#current-world-seed').value = String(world.seed);
     this.lastWorld = world; this.lastZoom = zoom;
-    this.get('#population').textContent = String(world.population);
+    const editorsVisible = this.debugMode || canUseWorldEditors(world);
+    this.setHidden('#units-open', !editorsVisible);
+    if (editorsVisible !== this.editorsVisible) {
+      this.editorsVisible = editorsVisible;
+      if (!editorsVisible && this.selectedTool === 'core:inspect') this.selectTool('core:human');
+      else this.updateCategory();
+      if (!editorsVisible) this.unitInspector.close();
+    }
+    this.equipmentInspector.update(world, this.language);
+    this.creatureInspector.update(world, this.language);
+    this.unitInspector.update(world, this.language);
+    this.worldLawsPanel.update(world, this.language);
+    this.tileInspector.update(world, this.language);
+    this.setText('#population', String(world.population));
     const populationByRace = { human: 0, elf: 0, orc: 0, dwarf: 0 };
     for (const resident of world.query('person')) populationByRace[raceOf(resident)]++;
-    for (const race of RACE_IDS) this.get(`#population-${race}`).textContent = String(populationByRace[race]);
-    this.get('#houses').textContent = String(world.houseCount);
+    for (const race of RACE_IDS) this.setText(`#population-${race}`, String(populationByRace[race]));
+    this.setText('#houses', String(world.houseCount));
     this.updateSociety(world);
-    this.get('#world-age').textContent = this.tr('День {day}', { day: 1 + Math.floor(world.tick / 1800) });
-    this.get('#season-name').textContent = this.tr(seasonAt(world.tick).label);
-    this.get('#season-year').textContent = this.tr('Year {year}', { year: yearAt(world.tick) });
-    this.get('#food-stocks').textContent = String(Math.floor(world.society.villages.reduce((total, village) => total + village.food, 0)));
-    this.get('#empty-hint').hidden = world.population > 0 || world.houseCount > 0;
-    this.get('#pause-badge').hidden = !world.paused;
-    this.get('.live-dot').classList.toggle('is-paused', world.paused);
+    this.setText('#world-age', calendarDate(world.tick, this.language, false));
+    const calendarHelp = this.tr('A year has 12 months of 30 days (360 days). Each season lasts 3 months. Current season: {season}.', { season: this.tr(seasonAt(world.tick).label) });
+    this.setText('#calendar-help', calendarHelp);
+    this.setAttribute('.calendar summary', 'title', calendarHelp);
+    this.setAttribute('.calendar summary', 'aria-label', calendarDate(world.tick, this.language));
+    this.setText('#season-name', this.tr(seasonAt(world.tick).label));
+    this.setText('#season-year', this.tr('Year {year}', { year: yearAt(world.tick) }));
+    this.setText('#food-stocks', String(Math.floor(world.society.villages.reduce((total, village) => total + village.food, 0))));
+    this.setHidden('#empty-hint', world.population > 0 || world.houseCount > 0);
+    this.setHidden('#pause-badge', !world.paused);
+    const dot = this.get('.live-dot');
+    if (dot.classList.contains('is-paused') !== world.paused) dot.classList.toggle('is-paused', world.paused);
     this.updateTime(world);
-    this.get('#zoom-value').textContent = `${Math.round(zoom * 100)}%`;
+    this.updateZoom(zoom);
   }
   private updateSociety(world: World): void {
+    this.setHidden('#society-panel', world.society.villages.length === 0);
+    this.setText('#village-count', String(world.society.villages.length));
+    const replace = (selector: string, html: string): void => {
+      const element = this.get(selector);
+      if (element.contains(document.activeElement) || this.renderedHTML.get(element) === html) return;
+      element.innerHTML = html; this.renderedHTML.set(element, html);
+    };
+    if (this.debugMode && this.settingsDialog.open) {
+      this.setHidden('#forest-settings', world.society.villages.length === 0);
+      replace('#forest-settings', `<h3>${escapeText(this.tr('Forestry'))}</h3>` + world.society.villages.map(v =>
+        `<div class="forest-settlement"><label class="forestry-policy">${escapeText(localizedSettlementName(world.seed, v, this.language))}<select data-forest-policy="${v.id}" aria-label="${escapeText(this.tr('Forestry'))} — ${escapeText(localizedSettlementName(world.seed, v, this.language))}">${Object.entries(FOREST_POLICIES).map(([id, policy]) => `<option value="${id}"${id === (v.economy?.forestPolicy ?? 'balanced') ? ' selected' : ''}>${escapeText(this.tr(policy.label))}</option>`).join('')}</select></label>${forestVillageLines(world, v, this.language).map(line => `<p>${escapeText(line)}</p>`).join('')}</div>`).join(''));
+    }
+    const panel = this.get<HTMLDetailsElement>('#society-panel');
+    if (panel.hidden || !panel.open) return;
     const nameText = settlementTextLocalizer(world.seed, world.society.villages, this.language);
     const people = [...world.query('person', 'citizen')], fields = [...world.query('farm')];
-    this.get('#society-panel').hidden = world.society.villages.length === 0;
-    this.get('#village-count').textContent = String(world.society.villages.length);
-    this.get('#families').textContent = String(people.filter(e => e.components.citizen!.partnerId !== null).length / 2);
-    this.get('#children').textContent = String(people.filter(e => e.components.person!.age < 18).length);
-    this.get('#fields').textContent = String(fields.length);
-    const replace = (selector: string, html: string): void => { const element = this.get(selector); if (element.innerHTML !== html) element.innerHTML = html; };
+    this.setText('#families', String(world.families.records.filter(f => f.type === 'normal' && f.dissolvedAt === null).length));
+    this.setText('#children', String(people.filter(e => !isAdult(e)).length));
+    this.setText('#fields', String(fields.length));
+    const residentsByVillage = new Map<number, typeof people>(), stoneHomes = new Map<number, number>();
+    for (const person of people) {
+      const id = person.components.citizen!.villageId;
+      if (id === null) continue;
+      const residents = residentsByVillage.get(id) ?? [];
+      if (!residents.length) residentsByVillage.set(id, residents);
+      residents.push(person);
+    }
+    for (const house of world.query('dwelling')) {
+      const { villageId, level } = house.components.dwelling!;
+      if (level === 2 && villageId !== null) stoneHomes.set(villageId, (stoneHomes.get(villageId) ?? 0) + 1);
+    }
     replace('#village-list', world.society.villages.map(v => {
-      const residents = people.filter(e => e.components.citizen!.villageId === v.id);
+      const residents = residentsByVillage.get(v.id) ?? [];
       const hungry = residents.filter(e => e.components.citizen!.hunger >= 75).length;
       const detail = this.tr(RACES[v.race ?? 'human'].label) + ' · ' + this.tr('{count} жителей · {food} еды', { count: residents.length, food: Math.floor(v.food) }) + (hungry ? this.tr(' · {count} голодают', { count: hungry }) : '');
-      const elder = v.government?.leaderId ? this.tr('Elder: {name} · Trust: {trust}%', { name: residentName(v.government.leaderId), trust: Math.round(v.government.trust) }) : this.tr('No elder elected');
+      const territory = territoryLines(world, v, this.language).map(line => `<span>${escapeText(line)}</span>`).join('');
+      const elder = v.government?.leaderId ? this.tr('Elder: {name} · Trust: {trust}%', { name: residentName(v.government.leaderId, world), trust: Math.round(v.government.trust) }) + ' · ' + this.tr('Next election: {date}', { date: calendarDate(v.government.electionAt, this.language) }) : this.tr('No elder elected');
       const stone = v.economy ? `<span class="stone-stocks">${escapeText(this.tr('Stone: {stone} · Axes in stock: {axes}', { stone: Math.floor(v.economy.stocks.stone), axes: v.economy.stocks.stoneAxes }))}</span><span>${escapeText(this.tr('Stone homes: {homes} · Armed residents: {armed}', {
-        homes: [...world.query('dwelling')].filter(e => e.components.dwelling!.villageId === v.id && e.components.dwelling!.level === 2).length,
-        armed: residents.filter(e => e.components.citizen!.weapon === 'stone-axe').length,
+        homes: stoneHomes.get(v.id) ?? 0,
+        armed: residents.filter(e => !!equippedItem(world, e.id, 'weapon')).length,
       }))}</span>` : '';
       const newcomers = residents.flatMap(e => e.components.citizen!.integration ? [e.components.citizen!.integration!] : []);
       const integration = newcomers.length ? `<span title="${escapeText(this.tr('Newcomers settle in through housing, work and friendships. Isolated families may move again.'))}">${escapeText(this.tr('Newcomers: {settling} settling in · {settled} settled · {isolated} isolated', {
         settling: newcomers.filter(s => s.status === 'settling').length, settled: newcomers.filter(s => s.status === 'settled').length, isolated: newcomers.filter(s => s.status === 'isolated').length,
       }))}</span>` : '';
-      return `<div class="village-row"><span class="village-flag" style="background:${villageColor(v.id)}"></span><div><strong>${escapeText(localizedSettlementName(world.seed, v, this.language))}</strong><span>${escapeText(detail)}</span><span>${escapeText(elder)}</span>${stone}${integration}</div></div>`;
+      return `<div class="village-row"><span class="village-flag" style="background:${villageColor(v.id)}"></span><div><strong>${escapeText(localizedSettlementName(world.seed, v, this.language))}</strong><span>${escapeText(detail)}</span><span>${escapeText(elder)}</span>${territory}${stone}${currencyVillageLines(world, v, this.language).map(line => `<span>${escapeText(line)}</span>`).join('')}${resourceVillageLines(world, v, this.language).map(line => `<span class="resource-ledger">${escapeText(line)}</span>`).join('')}${integration}</div></div>`;
     }).join(''));
     const groups = allianceGroups(world.society), wars = world.society.wars.length;
     const roads = world.society.roads.filter(r => roadIsIntact(world, r)).length;
     replace('#relations', `<span>${this.tr('Дорог')} <b>${roads}</b></span><span>${this.tr('Союзов')} <b id="alliance-count">${groups.length}</b></span><span class="${wars ? 'war-count' : ''}">${this.tr('Войн')} <b id="war-count">${wars}</b></span><span>${this.tr('Караванов')} <b id="caravan-count">${[...world.query('caravan')].length}</b></span>`);
     replace('#alliances', groups.map(group => `<div class="alliance-card"><strong style="color:${villageColor(group[0])}">${this.tr('Союз · поселений: {count}', { count: group.length })}</strong><span>${escapeText(nameText(sideName(world.society, group)))}</span></div>`).join(''));
     replace('#campaigns', world.society.wars.map(war => `<div class="campaign-card" data-war="${war.id}"><strong>${this.tr(world.tick < war.musterUntil ? 'Сбор войск' : 'Совместный поход')} · ${this.tr('{a} против {b}', { a: war.attackers.length, b: war.defenders.length })}</strong><span>${escapeText(nameText(sideName(world.society, war.attackers)))}</span><span class="versus">${this.tr('против')}</span><span>${escapeText(nameText(sideName(world.society, war.defenders)))}</span><small>${escapeText(this.tr('Цель: {target} · Потери {a} / {b}', { target: nameText(sideName(world.society, [war.attackTarget])), a: war.lossesAttackers, b: war.lossesDefenders }))}</small></div>`).join(''));
-    replace('#chronicle', world.society.history.slice(-5).reverse().map(e => `<li><time>${Math.floor(e.tick / 30 / 60)}:${String(Math.floor(e.tick / 30) % 60).padStart(2, '0')}</time>${escapeText(this.tr(nameText(e.text)))}</li>`).join(''));
+    replace('#chronicle', world.society.history.slice(-5).reverse().map(e => `<li><time>${escapeText(calendarDate(e.tick, this.language))}</time>${escapeText(this.tr(nameText(e.text)))}</li>`).join(''));
   }
   saved(text: string, error = false): void {
     this.savedText = text; this.saveHadError = error;

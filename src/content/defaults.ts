@@ -1,4 +1,12 @@
+import { registerFood } from './food';
+import { validShipment } from '../persistence/supply';
+import { registerPhysiology } from './physiology';
+import { validateBiomeEcology } from '../core/biome-ecology';
+import { registerReproductionForms } from './reproduction';
+import { registerWorldProcesses } from './world-processes';
 import { Registry, type ContentPack } from './registry';
+import { registerCreatures } from './creatures';
+import { registerAvailableTransformations, registerMetamorphosis } from './metamorphosis';
 import { componentValidators } from './components';
 import { defaultSystems } from '../systems';
 import { registerEffects } from '../systems/effects';
@@ -9,11 +17,28 @@ import { registerUfos } from './ufos';
 import { registerKaiju } from './kaiju';
 import { registerNaturalBiomes } from './natural-biomes';
 import { registerTerraforming } from './terraforming';
+import { registerTemperature } from './temperature';
 import { registerPeoples } from './peoples';
 import { registerThunderstorms } from './thunderstorms';
 import { registerSeafaring } from './seafaring';
+import { registerVisitors } from './visitors';
 import { registerVillageLife } from './village-life';
+import { registerEquipment } from './equipment';
 import { registerStone } from './stone';
+import { registerSilver } from './silver';
+import { registerGold } from './gold';
+import { registerBone } from './bone';
+import { registerUnits } from './units';
+import { registerBehaviour } from './behaviour';
+import { registerUnitTasks } from './unit-tasks';
+import { registerGems } from './gems';
+import { registerCommonMetals } from './common-metals';
+import { registerResources } from './resources';
+import { registerForestry } from './forestry';
+import { registerBuildings } from './buildings';
+import { registerStockpiles } from './stockpiles';
+import { registerTemples } from './temples';
+import { registerMines } from './mines';
 import { registerCataclysms } from './cataclysms';
 import { registerAfflictions } from './afflictions';
 import { registerGeohazards } from './geohazards';
@@ -27,8 +52,12 @@ export const coreContent: ContentPack = {
   id: 'core',
   install(registry) {
     for (const [key, validate] of Object.entries(componentValidators)) registry.registerComponent(key as ComponentKey, validate);
+    registry.registerComponent('shipment', validShipment);
+    registerPhysiology(registry);
+    registerFood(registry);
     registerEffects(registry);
     for (const system of defaultSystems) registry.registerSystem(system);
+    registerWorldProcesses(registry);
     registerPeoples(registry);
     registry
     .registerEntity({ id: 'core:tree', sprite: 'tree', create: (p, rng) => ({
@@ -46,7 +75,7 @@ export const coreContent: ContentPack = {
     }) })
     .registerEntity({ id: 'core:caravan', sprite: 'caravan', create: p => ({
       ...burnable(p, 100, 40, 35),
-      caravan: { fromId: 0, toId: null, food: 0, path: [], next: 0, returning: false, retryIn: 0 },
+      caravan: { fromId: 0, toId: null, food: 0, gems: 0, path: [], next: 0, returning: false, retryIn: 0 },
     }) })
     .registerEntity({ id: 'core:dynamite', sprite: 'dynamite', create: p => ({
       ...burnable(p, 16, 1, 15), explosive: { fuse: 2, radius: 2.75, power: 190, heat: 100 },
@@ -60,24 +89,46 @@ export const coreContent: ContentPack = {
     .registerTool({ id: 'core:rocket', category: 'destruction', icon: 'rocket', label: 'Ракета', radius: 4.5, color: '#e5b8e8', hint: 'Choose a target. A rocket flies in from a random direction.', apply: (world, p) => { if (!world.spawn('core:rocket', p)) return 'В мире слишком много объектов'; } });
     registerThunderstorms(registry);
     registerSeafaring(registry);
+    registerVisitors(registry);
     registerVillageLife(registry);
+    registerResources(registry);
+    registerForestry(registry);
+    registerStockpiles(registry);
+    registerTemples(registry);
+    registerMines(registry);
     registerStone(registry);
+    registerSilver(registry);
+    registerGold(registry);
+    registerBone(registry);
+    registerGems(registry);
+    registerCommonMetals(registry);
+    registerEquipment(registry);
     registerDragons(registry);
     registerUfos(registry);
     registerKaiju(registry);
     registerTerraforming(registry);
+    registerTemperature(registry);
     registerNaturalBiomes(registry);
     registerNapalm(registry);
     registerSuperweapons(registry);
     registerCataclysms(registry);
     registerAfflictions(registry);
     registerGeohazards(registry);
+    registerBuildings(registry);
+    registerUnits(registry);
+    registerBehaviour(registry);
+    registerUnitTasks(registry);
+    registerCreatures(registry);
+    registerMetamorphosis(registry);
   },
 };
 
 export function createRegistry(packs: readonly ContentPack[] = []): Registry {
   const registry = new Registry().use(coreContent);
   for (const pack of packs) registry.use(pack);
+  registerAvailableTransformations(registry);
+  registerReproductionForms(registry);
   registry.resolveSystems();
+  validateBiomeEcology(registry);
   return registry;
 }

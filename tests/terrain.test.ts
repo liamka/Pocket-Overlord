@@ -8,6 +8,31 @@ import { Ocean, OCEAN_COLOR } from '../src/render/ocean';
 import { Camera } from '../src/render/camera';
 import { componentValidators } from '../src/content/components';
 
+it('shares unchanged undo terrain and preserves in-place changes without mutating older checkpoints', () => {
+  const map = new TerrainMap(8, 8);
+  let checkpoint = map.snapshot();
+  expect(map.snapshot(checkpoint)).toBe(checkpoint);
+  for (const change of [
+    () => { map.moisture[3] = 0.125; },
+    () => { map.biomes[3] = 2; },
+    () => { map.surfaces[3] = 1; },
+    () => { map.set(3, 3, Terrain.Crater); },
+    () => { map.recovery.get(map.index(3, 3))!.age++; },
+    () => { map.set(4, 4, Terrain.Road); },
+    () => { map.roadWear.get(map.index(4, 4))!.age++; },
+    () => { map.roadWear.delete(map.index(4, 4)); },
+  ]) {
+    const original = structuredClone(checkpoint);
+    change();
+    const next = map.snapshot(checkpoint);
+    expect(next).not.toBe(checkpoint);
+    expect(next).toEqual(map.snapshot());
+    expect(checkpoint).toEqual(original);
+    expect(map.snapshot(next)).toBe(next);
+    checkpoint = next;
+  }
+});
+
 describe('authored world shapes', () => {
   it.each(BIOMES)('creates a playable, reproducible $id surrounded by open sea', biome => {
     const map = generateTerrain(10, undefined, undefined, biome.id);
@@ -30,20 +55,13 @@ describe('authored world shapes', () => {
     expect(agreement).toBeGreaterThan(0.98);
   }, 10000);
 
-  it('keeps the dragon tail, body, head and wing islands recognizable', () => {
-    const map = generateTerrain(20, 256, 192, 'dragon');
-    const landAt = (x: number, y: number): boolean => map.isLand((x - 50) * 192 * 0.87 / 100 + 128, (y - 50) * 192 * 0.87 / 100 + 96);
-    for (const [x, y] of [[40, 36], [65, 67], [35, 97], [32, 5], [80, 23]]) expect(landAt(x, y), `${x},${y}`).toBe(true);
-    for (const [x, y] of [[39, 57], [32, 89], [72, 35]]) expect(landAt(x, y), `${x},${y}`).toBe(false);
-  });
-
-  it('selects all six templates by seed and honors an explicit choice', () => {
+  it('selects only the five available templates by seed and honors an explicit choice', () => {
     expect(new Set(Array.from({ length: 12 }, (_, seed) => biomeForSeed(seed)))).toEqual(new Set([
-      'dragon', 'turtle', 'phoenix', 'kraken', 'whale', 'yin-yang',
+      'turtle', 'phoenix', 'kraken', 'whale', 'yin-yang',
     ]));
-    const dragon = generateTerrain(20, 160, 112, 'dragon');
+    const phoenix = generateTerrain(20, 160, 112, 'phoenix');
     const turtle = generateTerrain(20, 160, 112, 'turtle');
-    expect(dragon.tiles).not.toEqual(turtle.tiles);
+    expect(phoenix.tiles).not.toEqual(turtle.tiles);
   });
 
   it('separates the Yin and Yang halves and preserves their contrasting island eyes', () => {
@@ -138,18 +156,45 @@ describe('ocean shelves', () => {
     const colors: string[] = [];
     const drawing = { fillStyle: '', fillRect: () => { colors.push(drawing.fillStyle); } };
     const context = drawing as unknown as CanvasRenderingContext2D;
+    ocean.update(map); ocean.drawTile(context, 25, 24, 1);
+    const openOcean = [...colors]; colors.length = 0;
     map.set(24, 24, Terrain.Grass);
     ocean.update(map); map.dirty.clear();
     ocean.drawTile(context, 25, 24, 1);
     expect(colors.some(color => color !== OCEAN_COLOR)).toBe(true);
+    const shoreColors = [...colors];
     colors.length = 0;
     ocean.drawTile(context, 0, 0, 1);
-    expect(colors).toEqual([OCEAN_COLOR]);
+    expect(colors).not.toEqual(shoreColors);
+    expect(colors.length).toBeGreaterThan(1);
     map.set(24, 24, Terrain.DeepWater);
     ocean.update(map);
-    expect(map.dirty.size).toBe(map.tiles.length);
+    expect(map.dirty.has(map.index(25, 24))).toBe(true);
+    expect(map.dirty.has(map.index(0, 0))).toBe(false);
+    expect(map.dirty.size).toBeLessThan(map.tiles.length);
     colors.length = 0;
     ocean.drawTile(context, 25, 24, 1);
-    expect(colors).toEqual([OCEAN_COLOR]);
+    expect(colors).toEqual(openOcean);
+  });
+
+  it('renders reproducible offshore depth patches without changing saved terrain', () => {
+    const map = new TerrainMap(128, 128), ocean = new Ocean();
+    map.set(64, 64, Terrain.Sand);
+    const before = map.snapshot(); ocean.update(map);
+    const colors: string[] = [];
+    const drawing = { fillStyle: '', fillRect: () => colors.push(drawing.fillStyle) };
+    const context = drawing as unknown as CanvasRenderingContext2D;
+    const depths = (seed: number): string[] => {
+      colors.length = 0;
+      for (let y = 24; y < 104; y += 4) for (let x = 24; x < 104; x += 4) {
+        if (Math.hypot(x - 64, y - 64) > 24) ocean.drawTile(context, x, y, seed);
+      }
+      return colors.filter(color => color.length === 7);
+    };
+    const first = depths(20);
+    expect(new Set(first).size).toBeGreaterThan(2);
+    expect(depths(20)).toEqual(first);
+    expect(depths(21)).not.toEqual(first);
+    expect(map.snapshot()).toEqual(before);
   });
 });

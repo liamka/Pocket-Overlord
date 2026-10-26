@@ -10,7 +10,7 @@ import { ferries } from '../src/systems/ferries';
 import { findPath, findRoadPath } from '../src/systems/navigation';
 import { movement } from '../src/systems/people';
 import { roads } from '../src/systems/society';
-import { advance, villageWorld } from './helpers';
+import { setFood, advance, villageWorld, workRoad } from './helpers';
 
 function riverWorld(span: number, vertical = false, deep = false): World {
   const world = villageWorld(vertical ? [{ x: 24, y: 8 }, { x: 24, y: 38 }] : [{ x: 8, y: 24 }, { x: 38, y: 24 }]);
@@ -25,7 +25,7 @@ function riverWorld(span: number, vertical = false, deep = false): World {
 function buildCrossing(world: World): void {
   roads(world);
   expect(world.society.roads).toHaveLength(1);
-  for (let i = 0; i < 60 && !roadIsIntact(world, world.society.roads[0]); i++) { world.tick += 30; roads(world); }
+  workRoad(world);
   expect(roadIsIntact(world, world.society.roads[0])).toBe(true);
 }
 
@@ -132,7 +132,7 @@ describe('river ferries', () => {
 
   it('delivers and returns a real caravan while keeping the river water', () => {
     const world = riverWorld(6); buildCrossing(world);
-    const [a, b] = world.society.villages; a.food = 100; b.food = 10;
+    const [a, b] = world.society.villages; setFood(a, 100); setFood(b, 10);
     expect(dispatchCaravan(world, a.id, b.id, 12)).toBe(true);
     const wagon = [...world.query('caravan')][0]; let boarded = false;
     for (let n = 0; n < 65 * 30 && world.entities.has(wagon.id); n++) {

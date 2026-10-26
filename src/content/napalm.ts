@@ -80,7 +80,7 @@ const icon: PixelSprite = {
 export function registerNapalm(registry: Registry): void {
   registry.registerEntity({ id: NAPALM_FIRE_ID, sprite: embers, create: position => ({
     position: { ...position }, combustible: { fuel: NAPALM.fireSeconds, ignition: 15 },
-    thermal: { temperature: 100, wetness: 0, burning: true },
+    thermal: { temperature: 100, wetness: 0, burning: true, ignition: { cause: 'fire', player: true } },
   }) });
   registry.registerScenario<NapalmState>({ id: STRIKE_ID, create: () => ({ strikes: [] }), validate: validState,
     update: (world, state, dt) => {
@@ -96,7 +96,7 @@ export function registerNapalm(registry: Registry): void {
           if (strike.elapsed + 1e-9 < NAPALM.approach + bomb.index * NAPALM.interval + NAPALM.fall) continue;
           strike.bombs.splice(b, 1);
           if (!world.terrain.inside(bomb.x, bomb.y)) continue;
-          world.events.push({ kind: 'blast', x: bomb.x, y: bomb.y, radius: NAPALM.radius, power: 144, heat: 180, style: 'napalm' });
+          world.events.push({ kind: 'blast', x: bomb.x, y: bomb.y, radius: NAPALM.radius, power: 144, heat: 180, style: 'napalm', player: true });
           if (world.terrain.isLand(bomb.x, bomb.y)) world.spawn(NAPALM_FIRE_ID, { x: bomb.x, y: bomb.y });
         }
         if (strike.elapsed >= NAPALM_END && !strike.bombs.length) state.strikes.splice(i, 1);

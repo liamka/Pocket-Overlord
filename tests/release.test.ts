@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const directories: string[] = [];
 const originalHead = 'a'.repeat(40);
 
-// Exercise the real release CLI and ZIP packaging, with Git, npm and GitHub
+// Exercise the real release CLI and ZIP packaging, with Git, npm, GitHub and butler
 // replaced at the process boundary. These tests cannot publish or push.
 const commandStub = `#!${process.execPath}
 const fs = require('node:fs');
@@ -56,7 +56,8 @@ if (command === 'git') {
   else if (args[1] === 'build') {
     if (config.buildFailure) fail();
     fs.mkdirSync('dist', {recursive: true});
-    fs.writeFileSync('dist/index.html', '<title>Pocket Overlord</title>' + tag);
+    const base = config.absolutePaths ? '/' : process.env.PAGES_BASE_PATH;
+    fs.writeFileSync('dist/index.html', '<title>Pocket Overlord</title>' + tag + '<script src="' + base + 'game.js"></script>');
     fs.writeFileSync('dist/game.js', 'console.log("built");');
     if (config.headChanged) {state.head = 'c'.repeat(40); save();}
     if (config.unexpectedChange) {state.dirty = true; save();}
@@ -69,11 +70,19 @@ if (command === 'git') {
     }
     if (config.changesetChanged) fs.appendFileSync('.changeset/first.md', '\\nConcurrent edit.\\n');
   } else throw new Error('Unexpected npm command');
+} else if (command === 'butler') {
+  if (args[0] === 'status') { if (config.itchAuthFailure) fail(); }
+  else if (args[0] === 'push') {
+    if (config.itchUploadFailure && !state.itchFailedOnce) {
+      state.itchFailedOnce = true; save(); fail();
+    }
+    if (!fs.existsSync(args[1])) throw new Error('Missing release archive');
+  } else throw new Error('Unexpected butler command');
 }
 `;
 
 function fixture(scenario: Record<string, boolean> = {}, version = '234') {
-  const directory = mkdtempSync(join(tmpdir(), 'pocket-overlord-release-'));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'pocket-overlord-release-')));
   directories.push(directory);
   mkdirSync(join(directory, 'scripts'));
   mkdirSync(join(directory, 'bin'));
@@ -84,7 +93,7 @@ function fixture(scenario: Record<string, boolean> = {}, version = '234') {
   copyFileSync(new URL('../.changeset/config.json', import.meta.url), join(directory, '.changeset/config.json'));
   copyFileSync(new URL('../.changeset/README.md', import.meta.url), join(directory, '.changeset/README.md'));
   copyFileSync(new URL('../Makefile', import.meta.url), join(directory, 'Makefile'));
-  for (const command of ['git', 'npm', 'gh']) {
+  for (const command of ['git', 'npm', 'gh', 'butler']) {
     const file = join(directory, 'bin', command);
     writeFileSync(file, commandStub);
     chmodSync(file, 0o755);
@@ -246,6 +255,11 @@ describe('make release', () => {
     expect(notes).toContain('Current change.');
     expect(notes).toContain('- [#234] Current change.');
     expect(notes).not.toContain('Older change.');
+    const itch = commands.findIndex(command => command[0] === 'butler' && command[1] === 'push');
+    expect(itch).toBeGreaterThan(create);
+    expect(commands[itch]).toEqual(['butler', 'push', join(directory, name), 'liamka/pocket-overlord:html5', '--userversion', '234', '--if-changed']);
+    const html = spawnSync('unzip', ['-p', join(directory, name), 'index.html'], { encoding: 'utf8' });
+    expect(html.stdout).toContain('src="./game.js"');
   });
 
   it('uses the prepared version and changelog without rewriting files or making commits', () => {
@@ -275,11 +289,49 @@ describe('make release', () => {
     expect(test.commands()).not.toContainEqual(['npm', 'run', 'build']);
   });
 
-  it.each(['dirty', 'detached', 'authFailure', 'apiFailure', 'versionMismatch', 'versionChanged', 'published', 'tagConflict', 'installFailure', 'buildFailure', 'headChanged', 'unexpectedChange'])('stops before any push or publication on %s', failure => {
+  it.each(['dirty', 'detached', 'authFailure', 'apiFailure', 'itchAuthFailure', 'versionMismatch', 'versionChanged', 'published', 'tagConflict', 'installFailure', 'buildFailure', 'headChanged', 'unexpectedChange'])('stops before any push or publication on %s', failure => {
     const test = fixture({ [failure]: true });
     expect(test.run().status).not.toBe(0);
     expect(test.commands().some(command => command[0] === 'git' && ['commit', 'push'].includes(command[1]))).toBe(false);
     expect(test.commands().some(command => command[0] === 'gh' && ['create', 'upload', 'edit'].includes(command[2]))).toBe(false);
+    expect(test.commands().some(command => command[0] === 'butler' && command[1] === 'push')).toBe(false);
+  });
+
+  it('checks itch.io access before consuming changesets or building', () => {
+    const test = fixture({ itchAuthFailure: true });
+    test.addChangeset('first', 'Pending change.');
+    const result = test.run();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('butler login');
+    expect(test.commands()).not.toContainEqual(['npm', 'run', 'build']);
+    expect(existsSync(join(test.directory, '.changeset/first.md'))).toBe(true);
+  });
+
+  it('retries a failed itch.io upload using the same archive without rebuilding or releasing again', () => {
+    const test = fixture({ itchUploadFailure: true });
+    test.addChangeset('first', 'One new revision.');
+    const result = test.run();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('GitHub release v235 is published');
+    expect(result.stderr).toContain('make release-itch');
+    const archive = join(test.directory, 'releases/v235/PocketOverlord-235-web.zip');
+    const before = readFileSync(archive);
+    const commandCount = test.commands().length;
+    expect(test.run('release-itch').status).toBe(0);
+    expect(readFileSync(archive)).toEqual(before);
+    expect(test.commands().slice(commandCount)).toEqual([
+      ['butler', 'status', 'liamka/pocket-overlord:html5'],
+      ['butler', 'push', archive, 'liamka/pocket-overlord:html5', '--userversion', '235', '--if-changed'],
+    ]);
+    expect(JSON.parse(readFileSync(join(test.directory, 'package.json'), 'utf8')).version).toBe('235');
+  });
+
+  it.each(['missing', 'modified', 'absolute'])('rejects an unsafe retry archive: %s', problem => {
+    const test = fixture({ absolutePaths: problem === 'absolute' });
+    if (problem !== 'missing') expect(test.run('dist').status).toBe(0);
+    if (problem === 'modified') writeFileSync(join(test.directory, 'releases/v234/PocketOverlord-234-web.zip'), 'corrupted');
+    expect(test.run('release-itch').status).not.toBe(0);
+    expect(test.commands().some(command => command[0] === 'butler')).toBe(false);
   });
 
   it.each(['1', '9', '10', '9007199254740993'])('packages integer revision %s without adding version components', version => {
@@ -314,6 +366,7 @@ describe('make release', () => {
     const test = fixture({ pushFailure: true });
     expect(test.run().status).not.toBe(0);
     expect(test.commands().some(command => command[0] === 'gh' && command[2] === 'create')).toBe(false);
+    expect(test.commands().some(command => command[0] === 'butler' && command[1] === 'push')).toBe(false);
   });
 
   it('completes a matching draft after an interrupted upload without creating a second release', () => {
@@ -342,6 +395,6 @@ describe('make release', () => {
     expect(test.run('dist').status).toBe(0);
     const listing = spawnSync('unzip', ['-Z', '-1', join(test.directory, 'releases/v234/PocketOverlord-234-web.zip')], { encoding: 'utf8' });
     expect(listing.stdout).not.toContain('removed.txt');
-    expect(test.commands().some(command => ['git', 'gh'].includes(command[0]))).toBe(false);
+    expect(test.commands().some(command => ['git', 'gh', 'butler'].includes(command[0]))).toBe(false);
   });
 });

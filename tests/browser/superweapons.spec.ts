@@ -76,7 +76,7 @@ test('the real Tsar Bomba tool replaces coastal land with visible water and pres
   await page.locator('[data-category="destruction"]').click();
   await page.getByRole('button', { name: 'Tsar Bomba 100MT', exact: true }).click();
   await expect(page.locator('#tool-hint')).toContainText('Coastal craters fill with water');
-  await page.mouse.click(box.x + aim.x, box.y + aim.y); await page.keyboard.press('4');
+  await page.mouse.click(box.x + aim.x, box.y + aim.y); await page.locator('#speed-picker').click(); await page.locator('[data-speed="4"]').click();
   const readSave = () => page.evaluate(() => new Promise<WorldSnapshot>((resolve, reject) => {
     const open = indexedDB.open('little-world', 1);
     open.onerror = () => reject(open.error);
@@ -89,7 +89,7 @@ test('the real Tsar Bomba tool replaces coastal land with visible water and pres
     const saved = await readSave();
     return saved.terrain.tiles[24 * 48 + 28] === Terrain.Water && !saved.scenarios.some(s => s.id === 'core:tsar-bomba');
   }, { timeout: 20000 }).toBe(true);
-  await page.keyboard.press('1'); await expect.poll(looksWet).toBe(true);
+  await page.keyboard.press('Space'); await expect.poll(looksWet).toBe(true);
   const flooded = (await readSave()).terrain.tiles.map(tile => tile < Terrain.Sand);
   expect(flooded.filter(Boolean).length).toBeGreaterThan(20 * 48);
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();

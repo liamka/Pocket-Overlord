@@ -24,6 +24,9 @@ describe('world and command boundary', () => {
     expect(world.command({ kind: 'use-tool', toolId: 'core:human', x: 20, y: 20 })).toBeUndefined();
     for (let i = 0; i < POPULATION_LIMIT + 10; i++) world.spawn('core:person', { x: 10, y: 10 });
     expect(world.population).toBe(POPULATION_LIMIT);
+    for (const race of ['human', 'elf', 'orc', 'dwarf']) {
+      expect(world.registry.tools.get(`core:${race}`)!.canApply!(world, { x: 35, y: 35 })).toBe(false);
+    }
     expect(world.command({ kind: 'use-tool', toolId: 'core:human', x: 35, y: 35 })).toBeTruthy();
     expect(world.population).toBe(POPULATION_LIMIT);
   });
@@ -96,23 +99,72 @@ describe('world and command boundary', () => {
   });
   it('yields within a frame budget at maximum speed and discards overdue steps', () => {
     let work = 0, steps = 0;
-    const clock = new FixedClock(() => work);
+    const clock = new FixedClock(() => work, 6);
     const step = (): void => { work += 2; steps++; };
-    clock.advance(0, true, step, 40);
-    expect(clock.advance(1000 / 60, true, step, 40)).toBe(3);
+    clock.advance(0, true, step, 20);
+    expect(clock.advance(1000 / 60, true, step, 20)).toBe(3);
     expect(work).toBe(6);
     // A zero-time frame cannot execute overdue simulation steps.
-    expect(clock.advance(1000 / 60, true, step, 40)).toBe(0);
-    clock.advance(200, false, step, 40);
+    expect(clock.advance(1000 / 60, true, step, 20)).toBe(0);
+    clock.advance(200, false, step, 20);
     clock.advance(50000, true, step, 1);
     clock.advance(50100, true, step, 1);
     expect(steps).toBe(6);
   });
+  it.each(SIMULATION_SPEEDS)('sustains %sx when steps take half a millisecond', speed => {
+    let work = 0, steps = 0;
+    const clock = new FixedClock(() => work);
+    const step = (): void => { work += 0.5; steps++; };
+    clock.advance(0, true, step, speed);
+    for (let frame = 1; frame <= 60; frame++) clock.advance(frame * 1000 / 60, true, step, speed);
+    expect(steps).toBe(30 * speed);
+  });
+  it('gives faster modes more CPU time while bounding expensive frames and discarding backlog', () => {
+    const counts = ([1, 4, 10, 20] as const).map(speed => {
+      let work = 0;
+      const clock = new FixedClock(() => work);
+      const step = (): void => { work += 3; };
+      clock.advance(0, true, step, speed);
+      const count = clock.advance(1000 / 30, true, step, speed);
+      expect(work).toBeLessThanOrEqual(10);
+      expect(clock.advance(1000 / 30, true, step, speed)).toBe(0);
+      return count;
+    });
+    for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeGreaterThanOrEqual(counts[i - 1]);
+    expect(counts[3]).toBeGreaterThan(counts[0]);
+  });
+  it('reserves the requested render budget and predicts the cost of the next step', () => {
+    let work = 0;
+    const clock = new FixedClock(() => work), step = (): void => { work += 3; };
+    clock.advance(0, true, step, 20, 8);
+    expect(clock.advance(100, true, step, 20, 8)).toBe(2);
+    expect(work).toBe(6);
+    expect(clock.advance(100, true, step, 20, 8)).toBe(0);
+  });
+  it('sustains fast movement when an occasional expensive step still fits the frame budget', () => {
+    let work = 0, steps = 0, distance = 0;
+    const clock = new FixedClock(() => work);
+    const step = (): void => { work += steps++ % 30 === 0 ? 5 : 0.5; distance += STEP; };
+    clock.advance(0, true, step, 20);
+    for (let frame = 1; frame <= 60; frame++) clock.advance(frame * 1000 / 60, true, step, 20);
+    expect(steps).toBe(600);
+    expect(distance).toBeCloseTo(20);
+    expect(work).toBe(390);
+  });
+  it('clears fast-mode elapsed time when switching back to normal speed', () => {
+    let work = 0;
+    const clock = new FixedClock(() => work), step = (): void => { work += 3; };
+    clock.advance(0, true, step, 20);
+    clock.advance(1000 / 30, true, step, 20);
+    clock.reset();
+    expect(clock.advance(100, true, step, 1)).toBe(0);
+    expect(clock.advance(100 + 1000 / 30, true, step, 1)).toBe(1);
+  });
   it('bounds step count even when the timer has insufficient precision', () => {
     const clock = new FixedClock(() => 0);
-    clock.advance(0, true, () => {}, 40);
-    expect(clock.advance(200, true, () => {}, 40)).toBe(240);
-    expect(clock.advance(200, true, () => {}, 40)).toBe(0);
+    clock.advance(0, true, () => {}, 20);
+    expect(clock.advance(200, true, () => {}, 20)).toBe(120);
+    expect(clock.advance(200, true, () => {}, 20)).toBe(0);
   });
   it.each(SIMULATION_SPEEDS)('queues bombs while stopped and detonates them at %sx', speed => {
     const world = flatWorld(), clock = new FixedClock(() => 0);
@@ -130,11 +182,11 @@ describe('world and command boundary', () => {
     for (const [x, y] of [[12, 20], [20, 20], [35, 35]]) expect(world.terrain.at(x, y)).toBe(Terrain.Crater);
   });
   it.each([false, true])('ignores unsupported speed commands without changing pause (paused: %s)', paused => {
-    const world = flatWorld(); world.command({ kind: 'speed', speed: 40 }); world.paused = paused;
-    for (const speed of [41, 50, 500, 5000]) {
+    const world = flatWorld(); world.command({ kind: 'speed', speed: 20 }); world.paused = paused;
+    for (const speed of [40, 41, 50, 500, 5000]) {
       // @ts-expect-error JavaScript callers can send unsupported speeds.
       world.command({ kind: 'speed', speed });
-      expect(world.speed).toBe(40); expect(world.paused).toBe(paused);
+      expect(world.speed).toBe(20); expect(world.paused).toBe(paused);
     }
   });
   it('resumes the previous speed after pausing and returns to normal speed on start', () => {
@@ -275,9 +327,11 @@ describe('property-based effects and tools', () => {
     const far = world.spawn('test:wooden-crate', { x: 40, y: 40 })!;
     world.events.push({ kind: 'blast', x: 20, y: 20, radius: 6, power: 500, heat: 100 });
     processEvents(world);
-    expect([...world.entities.values()].filter(e => !e.components.ruin).map(e => e.id)).toEqual([far.id]);
+    expect([...world.entities.values()].filter(e => !e.components.ruin && !e.components.resourcePile).map(e => e.id)).toEqual([far.id]);
     const rubble = world.nearby({ x: 20, y: 20 }, 6);
-    expect(rubble).toHaveLength(1); expect(rubble[0].components.ruin).toBeDefined();
+    expect(rubble).toHaveLength(2);
+    expect(rubble.filter(e => e.components.ruin)).toHaveLength(1);
+    expect(rubble.filter(e => e.components.resourcePile)).toHaveLength(1);
     expect(world.population).toBe(0); expect(world.houseCount).toBe(0);
   });
   it('spreads fire to a new registered flammable type and rain suppresses it', () => {
@@ -368,28 +422,30 @@ describe('people and settlements', () => {
     for (const [i, p] of [a, b].entries()) {
       p.components.person!.sex = i ? 'b' : 'a'; p.components.person!.buildIn = 0;
       p.components.person!.reproduceIn = 0;
+      p.components.reproduction!.cooldowns = {};
     }
     advance(world, 0.5);
     expect(world.houseCount).toBe(0); expect(a.components.citizen!.partnerId).toBeNull();
     advance(world, 0.5);
     expect(world.houseCount).toBe(1); expect(a.components.citizen!.partnerId).toBe(b.id);
     const site = [...world.query('dwelling')][0];
-    expect(site.components.dwelling!.construction).toBeDefined();
+    expect(site.components.building!.project).toBeDefined();
     expect(a.components.citizen!.pregnancy).toBe(0);
-    for (let i = 0; i < 30 && a.components.citizen!.pregnancy === 0; i++) advance(world, 1);
-    expect(site.components.dwelling!.construction).toBeUndefined();
+    for (let i = 0; i < 90 && a.components.citizen!.pregnancy === 0; i++) advance(world, 1);
+    expect(site.components.building!.project).toBeUndefined();
     expect(a.components.citizen!.pregnancy).toBeGreaterThan(0);
-    advance(world, 8);
+    const pending = a.components.reproduction!.pending!, expectedPopulation = 2 + pending.children.length;
+    advance(world, (pending.dueAt - world.tick) / 30 - STEP);
     expect(world.population).toBe(2);
-    advance(world, 9);
-    expect(world.houseCount).toBe(1); expect(world.population).toBe(3);
+    advance(world, STEP);
+    expect(world.houseCount).toBe(1); expect(world.population).toBe(expectedPopulation);
     expect(a.components.person!.homeId).toBe(b.components.person!.homeId);
     const child = [...world.query('person')].find(e => e.id !== a.id && e.id !== b.id)!;
     expect(child.components.person!.age).toBeLessThan(1);
     const home = world.entities.get(a.components.person!.homeId!)!;
-    home.components.dwelling!.capacity = 3;
+    home.components.dwelling!.capacity = expectedPopulation;
     a.components.person!.buildIn = 1000;
-    advance(world, 60); expect(world.population).toBe(3);
+    advance(world, 60); expect(world.population).toBe(expectedPopulation);
     world.remove(home.id); expect(a.components.person!.homeId).toBeNull(); expect(child.components.person!.homeId).toBeNull();
   });
   it('does not reproduce without a pair', () => {
@@ -451,7 +507,8 @@ describe('gradual landscape recovery', () => {
     advance(world, 384);
     expect(world.terrain.tiles).toEqual(original);
     expect(world.population).toBe(0); expect(world.houseCount).toBe(0);
-    expect([...world.query('ruin')]).toHaveLength(1); expect(world.entities.size).toBe(1);
+    expect([...world.query('ruin')]).toHaveLength(1); expect(world.entities.size).toBe(2);
+    expect([...world.query('resourcePile')]).toHaveLength(1);
     expect(world.terrain.recovery.size).toBe(0);
   });
   it('rain restores the remembered beach surface after its crater has closed', () => {

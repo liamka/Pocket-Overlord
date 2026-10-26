@@ -1,3 +1,4 @@
+import { lawEnabled } from '../core/world-rules';
 import type { PixelSprite, Registry } from './registry';
 import type { World } from '../core/world';
 import { Terrain, WORLD_WIDTH, WORLD_HEIGHT, type Vec2 } from '../core/types';
@@ -5,8 +6,9 @@ import { integer, number, record } from '../core/validation';
 import { noise } from '../core/random';
 import { liftedIds } from '../core/cataclysms';
 import { aboardFerry } from '../core/ferries';
-import { ACID, GEOHAZARDS, VOLCANO, geohazards, poolRadius, type Pool, type Geohazards, type Volcano } from '../core/geohazards';
+import { ACID, GEOHAZARDS, VOLCANO, geohazards, markHazardsChanged, poolRadius, type Pool, type Geohazards, type Volcano } from '../core/geohazards';
 import { applyEvent } from '../systems/effects';
+import { heatCell } from '../systems/temperature';
 
 declare module '../core/types' { interface ComponentMap { volcano: Volcano } }
 
@@ -29,6 +31,7 @@ const nextSeed = (world: World): number => Math.floor(world.rng.range(0, 0x10000
 const clampPoint = (world: World, p: Vec2): Vec2 => ({ x: Math.max(0, Math.min(world.terrain.width - 0.001, p.x)), y: Math.max(0, Math.min(world.terrain.height - 0.001, p.y)) });
 function addPool(world: World, pools: Pool[], p: Vec2, radius: number, life: number, limit: number): void {
   if (!world.terrain.inside(p.x, p.y)) return;
+  markHazardsChanged(world);
   const old = pools.find(old => Math.hypot(old.x - p.x, old.y - p.y) < radius * 0.5);
   if (old) { old.remaining = life; return; }
   if (pools.length >= limit) pools.shift();
@@ -60,7 +63,7 @@ function update(world: World, state: Geohazards, dt: number): void {
     const p = { x: b.tx, y: b.ty };
     for (const e of world.nearby(p, 1.8).sort((a, b) => a.id - b.id)) {
       if (lifted.has(e.id) || e.components.volcano || e.components.dragon || e.components.ufo || e.components.projectile) continue;
-      applyEvent(world, { kind: 'damage', target: e.id, amount: 95 });
+      applyEvent(world, { kind: 'damage', target: e.id, amount: 95, cause: 'fire' });
       applyEvent(world, { kind: 'heat', target: e.id, amount: 130 });
     }
     addPool(world, state.lava, p, 1.6, VOLCANO.lavaLife, GEOHAZARDS.lava); state.bombs.splice(i, 1);
@@ -79,14 +82,18 @@ function update(world: World, state: Geohazards, dt: number): void {
     // Overlapping brush samples and lava branches never multiply damage.
     const hits = new Map<number, number>();
     for (let i = pools.length - 1; i >= 0; i--) {
-      const pool = pools[i], water = !world.terrain.isLand(pool.x, pool.y);
+      const pool = pools[i];
+      if (kind === 'lava') world.terrain.edit(() => world.terrain.circle(pool.x, pool.y, poolRadius(pool), (x, y) => {
+        heatCell(world, { x, y }, dt * 4);
+      }));
+      const water = world.terrain.cell(pool.x, pool.y).water && !world.terrain.cell(pool.x, pool.y).ice;
       const rain = world.effects.some(r => Math.hypot(pool.x - r.x, pool.y - r.y) <= r.radius);
-      pool.age = Math.min(1e8, pool.age + dt); pool.remaining = Math.max(0, pool.remaining - dt * (water ? 8 : rain ? 4 : 1));
+      pool.age = Math.min(1e8, pool.age + dt); pool.remaining = Math.max(0, pool.remaining - dt * (water ? 8 : rain ? 4 : kind === 'lava' && lawEnabled(world, 'eternal-lava') ? 0 : 1));
       if (pool.remaining <= 0) { pools.splice(i, 1); continue; }
       const radius = poolRadius(pool);
       if (!water && !pool.etched && pool.age >= 0.4) {
-        applyEvent(world, { kind: 'surface', x: pool.x, y: pool.y, radius: pool.radius, terrain: Terrain.Scorched });
-        if (kind === 'acid') applyEvent(world, { kind: 'surface', x: pool.x, y: pool.y, radius: pool.radius * 0.45, terrain: Terrain.Crater });
+        applyEvent(world, { kind: 'surface', x: pool.x, y: pool.y, radius: pool.radius, terrain: Terrain.Scorched, origin: kind === 'acid' ? 'acid' : 'volcano' });
+        if (kind === 'acid') applyEvent(world, { kind: 'surface', x: pool.x, y: pool.y, radius: pool.radius * 0.45, terrain: Terrain.Crater, origin: 'acid' });
         pool.etched = true;
       }
       if (water || kind === 'lava' && pool.remaining < 2) continue;
@@ -97,7 +104,7 @@ function update(world: World, state: Geohazards, dt: number): void {
       }
     }
     for (const [id, strength] of [...hits].sort(([a], [b]) => a - b)) {
-      applyEvent(world, { kind: 'damage', target: id, amount: rate * strength * dt });
+      applyEvent(world, { kind: 'damage', target: id, amount: rate * strength * dt, cause: kind === 'acid' ? 'acid' : 'fire' });
       if (kind === 'lava') applyEvent(world, { kind: 'heat', target: id, amount: 100 * strength * dt });
     }
   }
@@ -117,7 +124,7 @@ export function registerGeohazards(registry: Registry): void {
   });
   registry.registerSystem({ id: GEOHAZARDS.id, after: ['core:rain'], before: ['core:water'], update: (world, dt) => {
     const state = geohazards(world) ?? ([...world.query('volcano')].length ? ensureState(world) : undefined);
-    if (state) update(world, state, dt);
+    if (state) { update(world, state, dt); markHazardsChanged(world); }
   } });
   registry.registerTool({ id: ACID.id, label: 'Acid', category: 'destruction', icon: acidIcon, radius: ACID.radius, paint: true, color: '#b8c56a',
     hint: 'Pour acid that eats through residents, trees and buildings. Rain dilutes the puddles.',
@@ -131,11 +138,11 @@ export function registerGeohazards(registry: Registry): void {
       if (!world.terrain.isLand(p.x, p.y) || [...world.query('volcano')].length >= VOLCANO.limit || world.nearby(p, 8).some(e => e.components.volcano)) return;
       const state = ensureState(world); if (!state) return;
       const entity = world.spawn(VOLCANO.id, p); if (!entity) return;
-      for (const other of world.nearby(p, 2.5)) if (other.id !== entity.id) {
+      for (const other of world.nearby(p, 2.5).sort((a, b) => a.id - b.id)) if (other.id !== entity.id) {
         if (other.components.ruin) world.remove(other.id);
-        else if (!other.components.dragon && !other.components.ufo && !other.components.projectile) applyEvent(world, { kind: 'damage', target: other.id, amount: 500 });
+        else if (!other.components.dragon && !other.components.ufo && !other.components.projectile) applyEvent(world, { kind: 'damage', target: other.id, amount: 500, cause: 'divine', player: true });
       }
-      applyEvent(world, { kind: 'surface', ...p, radius: 3.5, terrain: Terrain.Scorched });
+      applyEvent(world, { kind: 'surface', ...p, radius: 3.5, terrain: Terrain.Scorched, origin: 'volcano' });
       world.terrain.circle(p.x, p.y, 1.2, (x, y) => { if (world.terrain.isLand(x, y)) world.terrain.set(x, y, Terrain.Mountain); });
     },
   });

@@ -1,0 +1,21 @@
+/** Our translations of the month names; English, Russian, Chinese, Japanese, Spanish. */
+export const calendarMessages: Record<string, readonly [string, string, string, string, string]> = {
+  'Crabuary': ['Crabuary', 'Крабуарий', '蟹月', 'カニ月', 'Cangrebrero'],
+  'Greguary': ['Greguary', 'Грегуарий', '格雷月', 'グレグ月', 'Greguario'],
+  'Musch': ['Musch', 'Муш', '菇月', 'キノコ月', 'Hongomarzo'],
+  'Monolith': ['Monolith', 'Монолит', '巨石月', 'モノリス月', 'Monolito'],
+  'Meow': ['Meow', 'Мяу', '喵月', 'ニャー月', 'Miau'],
+  'Joon': ['Joon', 'Джун', '琼月', 'ジューン月', 'Yunio'],
+  'Jooly': ['Jooly', 'Джули', '朱利月', 'ジューリー月', 'Yulio'],
+  'Citrust': ['Citrust', 'Цитруст', '柑橘月', 'シトラス月', 'Citrusto'],
+  'Septbark': ['Septbark', 'Септлай', '吠月', 'ワン月', 'Ladrimbre'],
+  'Makotober': ['Makotober', 'Макотябрь', '真月', 'マコト月', 'Makotubre'],
+  'Novembear': ['Novembear', 'Медведябрь', '熊月', 'クマ月', 'Osiembre'],
+  'Endember': ['Endember', 'Эндембер', '终月', 'おわり月', 'Finciembre'],
+  'calendar:day-month': ['{day} {month}', '{day} {month}', '{month}{day}日', '{month}{day}日', '{day} {month}'],
+  'calendar:date': ['{day} {month}, year {year}', '{day} {month}, год {year}', '第{year}年{month}{day}日', '{year}年目 {month}{day}日', '{day} {month}, año {year}'],
+  'A year has 12 months of 30 days (360 days). Each season lasts 3 months. Current season: {season}.': ['A year has 12 months of 30 days (360 days). Each season lasts 3 months. Current season: {season}.', 'В году 12 месяцев по 30 дней (360 дней). Сезон длится 3 месяца. Сейчас: {season}.', '一年有12个月，每月30天（共360天）。每季持续3个月。当前季节：{season}。', '1年は30日ずつの12か月（360日）です。各季節は3か月続きます。現在の季節：{season}。', 'El año tiene 12 meses de 30 días (360 días). Cada estación dura 3 meses. Estación actual: {season}.'],
+  'Author: {name} · Created: {date}': ['Author: {name} · Created: {date}', 'Автор: {name} · Создан: {date}', '制作者：{name} · 制作日期：{date}', '作者：{name} · 作成：{date}', 'Autor: {name} · Creación: {date}'],
+  'Shared profile changed: {date}': ['Shared profile changed: {date}', 'Общий профиль изменён: {date}', '共有特征更改日期：{date}', '共通設定の変更：{date}', 'Perfil compartido cambiado: {date}'],
+  'Next election: {date}': ['Next election: {date}', 'Следующие выборы: {date}', '下次选举：{date}', '次の選挙：{date}', 'Próxima elección: {date}'],
+};

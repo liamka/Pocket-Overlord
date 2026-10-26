@@ -45,7 +45,7 @@ function burst(world: World, state: CataclysmState, p: Vec2, z: number, spread: 
   if (kind === 'blood') stain(world, state, p, Math.min(3.5, spread * 0.45));
 }
 function capture(world: World, power: BloodTornado | GravityClap, radius: number, held: Set<number>): void {
-  for (const entity of world.nearby(power, radius)) {
+  for (const entity of world.nearby(power, radius).sort((a, b) => a.id - b.id)) {
     if (held.size >= CATACLYSMS.captives) break;
     if (!entity.components.person || !entity.components.health || held.has(entity.id) || aboardFerry(world, entity.id)) continue;
     const p = entity.components.position!;
@@ -63,7 +63,7 @@ function locate(world: World, entity: Entity, pose: LiftedPose): void {
 function killCaptive(world: World, state: CataclysmState, entity: Entity, pose: LiftedPose, spread: number): void {
   locate(world, entity, pose);
   burst(world, state, pose, pose.z, spread, 'blood');
-  applyEvent(world, { kind: 'damage', target: entity.id, amount: entity.components.health!.current });
+  applyEvent(world, { kind: 'damage', target: entity.id, amount: entity.components.health!.current, cause: 'gravity', player: true });
 }
 function tornado(world: World, state: CataclysmState, t: BloodTornado, dt: number, held: Set<number>): void {
   const before = t.age; t.age += dt;
@@ -95,7 +95,7 @@ function tornado(world: World, state: CataclysmState, t: BloodTornado, dt: numbe
     } else locate(world, entity, pose);
   }
   if (strength > 0.3 && Math.floor(before * 5) !== Math.floor(t.age * 5)) {
-    for (const entity of world.nearby(t, 5.5 * strength)) {
+    for (const entity of world.nearby(t, 5.5 * strength).sort((a, b) => a.id - b.id)) {
       const c = entity.components;
       if (!c.health || c.person || c.projectile || c.dragon || c.ufo || c.kaiju || c.ship) continue;
       if (c.health.current <= 32) {
@@ -103,7 +103,7 @@ function tornado(world: World, state: CataclysmState, t: BloodTornado, dt: numbe
         if (c.animal) t.blood = Math.min(1000000, t.blood + 1);
         else t.debris = Math.min(1000000, t.debris + 1);
       }
-      applyEvent(world, { kind: 'damage', target: entity.id, amount: 32 });
+      applyEvent(world, { kind: 'damage', target: entity.id, amount: 32, cause: 'gravity', player: true });
     }
   }
   if (t.blood && t.released !== null && t.age >= t.released + 0.4 && Math.floor(before * 12) !== Math.floor(t.age * 12)) {
@@ -126,7 +126,7 @@ function clap(world: World, state: CataclysmState, g: GravityClap, dt: number, h
     if (g.age + 1e-9 >= GRAVITY.charge) {
       g.fired = true; g.captives = [];
       // The expanding ground ring and its damage use the same radius and timeline.
-      applyEvent(world, { kind: 'surface', x: g.x, y: g.y, radius: 1.6, terrain: Terrain.Crater });
+      applyEvent(world, { kind: 'surface', x: g.x, y: g.y, radius: 1.6, terrain: Terrain.Crater, origin: 'stomp' });
       if (g.blood) for (let i = 0; i < 36; i++) {
         const angle = i * Math.PI * 2 / 36 + world.rng.range(-0.06, 0.06), radius = world.rng.range(2, GRAVITY.radius);
         stain(world, state, { x: g.x + Math.cos(angle) * radius, y: g.y + Math.sin(angle) * radius }, world.rng.range(0.25, 1.1));
@@ -136,7 +136,7 @@ function clap(world: World, state: CataclysmState, g: GravityClap, dt: number, h
   if (!g.fired || before >= GRAVITY.charge + GRAVITY.wave) return;
   const previous = Math.max(0, (before - GRAVITY.charge) / GRAVITY.wave) * GRAVITY.radius;
   const radius = Math.min(1, Math.max(0, (g.age - GRAVITY.charge) / GRAVITY.wave)) * GRAVITY.radius;
-  for (const entity of world.nearby(g, radius)) {
+  for (const entity of world.nearby(g, radius).sort((a, b) => a.id - b.id)) {
     const c = entity.components;
     if (!c.health || c.projectile || c.dragon || c.ufo || held.has(entity.id) || g.hit.includes(`,${entity.id},`)) continue;
     const dx = c.position!.x - g.x, dy = c.position!.y - g.y, distance = Math.hypot(dx, dy);
@@ -144,7 +144,7 @@ function clap(world: World, state: CataclysmState, g: GravityClap, dt: number, h
     g.hit += `,${entity.id},`;
     const damage = 250 * (1 - distance / (GRAVITY.radius * 1.4));
     if (c.health.current <= damage) burst(world, state, c.position!, 0, 4, c.person || c.animal ? 'blood' : 'debris');
-    applyEvent(world, { kind: 'damage', target: entity.id, amount: damage });
+    applyEvent(world, { kind: 'damage', target: entity.id, amount: damage, cause: 'gravity', player: true });
     if (c.motion) applyEvent(world, { kind: 'impulse', target: entity.id, x: dx / (distance || 1) * 12, y: dy / (distance || 1) * 12 });
   }
 }

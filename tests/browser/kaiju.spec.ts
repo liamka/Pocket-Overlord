@@ -112,9 +112,9 @@ test('real toolbar summons the kaiju, keyboard moves it, mouse fires and reload 
   const center = await page.locator('#world').evaluate(canvas => ({ x: canvas.clientWidth / 2, y: (canvas.clientHeight - 200) / 2 }));
   await page.mouse.click(center.x, center.y);
   await expect.poll(async () => (await readSave(page)).entities.filter(e => e.typeId === KAIJU_ID).length).toBe(1);
-  await page.keyboard.press('2'); await page.keyboard.down('KeyD');
+  await page.keyboard.press('Space'); await page.keyboard.down('KeyD');
   await page.waitForTimeout(650);
-  await page.keyboard.up('KeyD'); await page.keyboard.press('1');
+  await page.keyboard.up('KeyD'); await page.keyboard.press('Space');
   await expect.poll(async () => (await readSave(page)).entities.find(e => e.typeId === KAIJU_ID)?.components.position?.x).toBeGreaterThan(26);
   await expect.poll(async () => (await readSave(page)).paused).toBe(true);
   const moved = (await readSave(page)).entities.find(e => e.typeId === KAIJU_ID)!;
@@ -127,11 +127,11 @@ test('real toolbar summons the kaiju, keyboard moves it, mouse fires and reload 
     const camera = new Camera(); camera.width = canvas.clientWidth; camera.height = canvas.clientHeight; camera.fit(48, 48);
     return camera.worldToScreen(40, 24);
   });
-  await page.mouse.move(aim.x, aim.y); await page.mouse.down(); await page.keyboard.press('2');
-  // Speed shortcuts release pointer capture, so begin a fresh firing hold after unpausing.
+  await page.mouse.move(aim.x, aim.y); await page.mouse.down(); await page.keyboard.press('Space');
+  // Pausing shortcuts release pointer capture, so begin a fresh firing hold after unpausing.
   await page.mouse.up(); await page.mouse.down();
   await expect.poll(async () => (await readSave(page)).entities.some(e => e.id === target.id), { timeout: 15000 }).toBe(false);
-  await page.mouse.up(); await page.keyboard.press('1');
+  await page.mouse.up(); await page.keyboard.press('Space');
   await expect.poll(async () => (await readSave(page)).paused).toBe(true);
   const saved = (await readSave(page)).entities.find(e => e.typeId === KAIJU_ID)!;
   expect((await readSave(page)).entities.filter(e => e.typeId === KAIJU_ID)).toHaveLength(1);

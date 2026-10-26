@@ -1,3 +1,6 @@
+import { lawEnabled } from '../core/world-rules';
+import { statusStops } from '../core/status-effects';
+import { damageContext } from '../core/death';
 import type { PixelSprite, Registry } from './registry';
 import type { Entity, Vec2, WorldViewport } from '../core/types';
 import { Terrain, WORLD_HEIGHT, WORLD_WIDTH } from '../core/types';
@@ -148,14 +151,17 @@ function breathe(world: World, entity: Entity): void {
   if (!world.terrain.inside(impact.x, impact.y) || !world.terrain.isLand(impact.x, impact.y)
     || world.terrain.at(impact.x, impact.y) === Terrain.Mountain) return;
   if (world.effects.some(rain => Math.hypot(rain.x - impact.x, rain.y - impact.y) <= rain.radius)) return;
-  for (const victim of world.nearby(impact, DRAGON.impactRadius)) {
+  for (const victim of world.nearby(impact, DRAGON.impactRadius).sort((a, b) => a.id - b.id)) {
     if (!victim.components.combustible || victim.typeId === DRAGON_FIRE_ID) continue;
-    world.events.push({ kind: 'heat', target: victim.id, amount: 48 });
-    world.events.push({ kind: 'damage', target: victim.id, amount: 9 });
+    world.events.push({ kind: 'heat', target: victim.id, amount: 48, sourceId: entity.id });
+    world.events.push({ kind: 'damage', target: victim.id, amount: 9, cause: 'fire', sourceId: entity.id });
   }
   world.events.push({ kind: 'surface', ...impact, radius: DRAGON.impactRadius, terrain: Terrain.Scorched });
   // Successive ground impacts overlap as the dragon passes; existing flames stay behind.
-  if (!world.nearby(impact, 0.65).some(other => other.typeId === DRAGON_FIRE_ID)) world.spawn(DRAGON_FIRE_ID, impact);
+  if (!world.nearby(impact, 0.65).some(other => other.typeId === DRAGON_FIRE_ID)) {
+    const flame = world.spawn(DRAGON_FIRE_ID, impact);
+    if (flame?.components.thermal) flame.components.thermal.ignition = damageContext(world, { cause: 'fire', sourceId: entity.id });
+  }
 }
 
 function fly(world: World, dt: number): void {
@@ -163,19 +169,22 @@ function fly(world: World, dt: number): void {
     if (flame.typeId === DRAGON_FIRE_ID && (!flame.components.thermal!.burning || flame.components.combustible!.fuel <= 0)) world.remove(flame.id);
   }
   for (const entity of world.query('dragon', 'position')) {
+    if (statusStops(entity)) continue;
     const p = entity.components.position!, dragon = entity.components.dragon!;
     dragon.age += dt;
     if (dragon.arrival || dragon.departure) { travel(world, entity, dt); continue; }
     if (dragon.age + 1e-9 >= DRAGON.lifetime) { depart(world, entity); continue; }
     dragon.attackIn = Math.max(0, dragon.attackIn - dt);
     dragon.thinkIn = Math.max(0, dragon.thinkIn - dt);
+    const peaceful = lawEnabled(world, 'peaceful-monsters');
+    if (peaceful) { dragon.targetId = null; dragon.breath = dragon.pulseIn = 0; }
     const breathing = dragon.breath > 0;
     let target = world.entities.get(dragon.targetId ?? -1);
     if (!target || !prey(target)) { target = undefined; dragon.targetId = null; }
     if (!breathing && dragon.thinkIn === 0) {
       let best = Infinity;
       for (const candidate of world.nearby(p, 48)) {
-        if (!prey(candidate)) continue;
+        if (peaceful || !prey(candidate)) continue;
         const q = candidate.components.position!;
         const distance = Math.hypot(q.x - p.x, q.y - p.y);
         const bearing = Math.abs(angleDifference(Math.atan2(q.y - p.y, q.x - p.x), dragon.heading));
@@ -200,7 +209,7 @@ function fly(world: World, dt: number): void {
     const turn = angleDifference(desired, dragon.heading);
     dragon.heading += Math.max(-dt * 1.8, Math.min(dt * 1.8, turn));
     dragon.heading = (dragon.heading + Math.PI * 2) % (Math.PI * 2);
-    if (!breathing && dragon.attackIn === 0 && !nearEdge) {
+    if (!peaceful && !breathing && dragon.attackIn === 0 && !nearEdge) {
       const impact = dragonBreathPoint(p, dragon.heading, DRAGON.reach);
       const q = target?.components.position;
       const overLand = world.terrain.inside(impact.x, impact.y) && world.terrain.isLand(impact.x, impact.y)
@@ -242,7 +251,7 @@ export function registerDragons(registry: Registry): void {
     position: { ...position }, combustible: { fuel: DRAGON.fireSeconds, ignition: 15 }, thermal: { temperature: 100, wetness: 0, burning: true },
   }) });
   registry.registerSystem({ id: 'core:dragons', after: ['core:movement'], before: ['core:settlement'], update: fly });
-  registry.registerTool({ id: DRAGON_ID, category: 'destruction', icon: 'dragon', label: 'Dragon', radius: 2, showArea: false, color: '#ed8448',
+  registry.registerTool({ creaturePlacement: (_world, point) => ({ typeId: DRAGON_ID, point }), id: DRAGON_ID, category: 'destruction', icon: 'dragon', label: 'Dragon', radius: 2, showArea: false, color: '#ed8448',
     hint: 'Spawn a dragon. It flies over land and sea, breathing fire on people, forests and settlements.',
     apply: summon,
   });

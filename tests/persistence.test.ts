@@ -6,10 +6,56 @@ import { SAVE_VERSION, SIMULATION_SPEEDS, Terrain } from '../src/core/types';
 import { processEvents } from '../src/systems/effects';
 import { alliedGroup } from '../src/core/diplomacy';
 import { atWar, declareWar, formAlliance } from '../src/systems/diplomacy';
-import { IndexedDBBackend, SaveService } from '../src/persistence/storage';
+import { IndexedDBBackend, SaveService, packSnapshot, unpackSnapshot } from '../src/persistence/storage';
 import { advance, diplomaticWorld, flatWorld, villageWorld } from './helpers';
 
 describe('save compatibility and deterministic continuation', () => {
+  it('transfers only changed terrain chunks and reconstructs immutable checkpoints exactly', () => {
+    const first = flatWorld().snapshot(), frozen = structuredClone(first);
+    const full = packSnapshot(first);
+    expect(unpackSnapshot(full.snapshot)).toEqual(first);
+    const same = packSnapshot(first, first);
+    expect(same.buffers).toHaveLength(0);
+    expect(unpackSnapshot(same.snapshot, first)).toEqual(first);
+    const next = structuredClone(first);
+    next.terrain.tiles[0] = Terrain.Water; next.terrain.moisture[1200] = 0.123456789;
+    next.terrain.recovery = [{ index: 20, age: 1.25, target: Terrain.Grass }];
+    delete next.terrain.biomes; delete next.terrain.surfaces;
+    const delta = packSnapshot(next, first);
+    expect(delta.buffers.reduce((n, b) => n + b.byteLength, 0)).toBe(2 * 1024 * 8);
+    expect(unpackSnapshot(delta.snapshot, first)).toEqual(next);
+    expect(first).toEqual(frozen);
+    expect(() => unpackSnapshot(delta.snapshot)).toThrow();
+    next.seed++;
+    const replacement = packSnapshot(next, first);
+    expect(unpackSnapshot(replacement.snapshot)).toEqual(next);
+  });
+  it('captures queued autosaves immediately while sharing only unchanged terrain arrays', async () => {
+    const world = flatWorld(), writes: ReturnType<World['snapshot']>[] = [];
+    const service = new SaveService({ read: async () => undefined, write: async snapshot => { writes.push(snapshot); } }, world.registry);
+    await service.load();
+    const first = service.saveWorld(world);
+    world.tick = 3; world.terrain.moisture[0] = 0.125;
+    const second = service.saveWorld(world);
+    world.tick = 4; world.terrain.moisture[0] = 0.25;
+    await Promise.all([first, second]);
+    expect(writes.map(s => s.tick)).toEqual([0, 3]);
+    expect(writes.map(s => s.terrain.moisture[0])).toEqual([0, 0.125]);
+    expect(writes[1].terrain.tiles).toBe(writes[0].terrain.tiles);
+    expect(writes[1].terrain.moisture).not.toBe(writes[0].terrain.moisture);
+  });
+  it('keeps terrain, recovery and entities detached from both the world and later checkpoints', () => {
+    const world = flatWorld(), person = world.spawn('core:person', { x: 10, y: 10 })!;
+    world.terrain.set(20, 20, Terrain.Crater);
+    const saved = world.snapshot(), before = structuredClone(saved);
+    world.terrain.tiles[0] = Terrain.Water; world.terrain.moisture[0] = 0.75;
+    world.terrain.biomes[0]++; world.terrain.surfaces[0]++;
+    world.terrain.recovery.get(world.terrain.index(20, 20))!.age++;
+    person.components.position!.x++;
+    const next = world.snapshot(); next.terrain.tiles[1] = Terrain.Mountain;
+    expect(saved).toEqual(before);
+    expect(world.terrain.tiles[1]).toBe(Terrain.Grass);
+  });
   it('migrates active dynamite, rockets and rain to their smaller areas', () => {
     const world = flatWorld();
     world.spawn('core:dynamite', { x: 15, y: 20 })!.components.explosive!.radius = 5.5;
@@ -136,18 +182,27 @@ describe('save compatibility and deterministic continuation', () => {
     expect(decodeSave(old, world.registry)).toEqual({ ...old, version: SAVE_VERSION });
     expect(old.version).toBe(8);
   });
-  it.each([false, true])('migrates v11 speeds to at most 40x without changing the world (paused: %s)', paused => {
+  it.each([false, true])('migrates v11 speeds to at most 20x without changing the world (paused: %s)', paused => {
     const world = flatWorld(); world.paused = paused;
     world.command({ kind: 'use-tool', toolId: 'core:dynamite', x: 20, y: 20 });
-    for (const speed of [...SIMULATION_SPEEDS, 50, 500, 5000]) {
+    for (const speed of [...SIMULATION_SPEEDS, 40, 50, 500, 5000]) {
       const old = { ...world.snapshot(), version: 11, speed };
       const migrated = decodeSave(old, world.registry);
-      expect(migrated).toEqual({ ...old, version: SAVE_VERSION, speed: Math.min(speed, 40) });
+      expect(migrated).toEqual({ ...old, version: SAVE_VERSION, speed: Math.min(speed, 20) });
       const restored = new World(migrated.seed, world.registry, migrated);
       expect(restored.snapshot()).toEqual(migrated);
       expect(old.version).toBe(11); expect(old.speed).toBe(speed);
     }
     for (const speed of [41, 100, 5001, '5000']) expect(() => decodeSave({ ...world.snapshot(), version: 11, speed }, world.registry)).toThrow();
+  });
+  it.each([false, true])('migrates retired 40x saves to 20x without changing the world (paused: %s)', paused => {
+    const world = flatWorld(); world.paused = paused;
+    world.command({ kind: 'use-tool', toolId: 'core:dynamite', x: 20, y: 20 });
+    const old = { ...world.snapshot(), version: 59, speed: 40 };
+    const migrated = decodeSave(old, world.registry);
+    expect(migrated).toEqual({ ...old, version: SAVE_VERSION, speed: 20 });
+    expect(new World(migrated.seed, world.registry, migrated).snapshot()).toEqual(migrated);
+    expect(old.speed).toBe(40); expect(old.version).toBe(59);
   });
   it.each(SIMULATION_SPEEDS)('restores %sx and its paused state and rejects invalid speeds', speed => {
     const world = flatWorld(); world.command({ kind: 'speed', speed }); world.command({ kind: 'speed', speed: 0 });
@@ -155,7 +210,7 @@ describe('save compatibility and deterministic continuation', () => {
     const restored = new World(snapshot.seed, world.registry, snapshot);
     expect(restored.paused).toBe(true); expect(restored.speed).toBe(speed);
     restored.command({ kind: 'pause', paused: false }); expect(restored.speed).toBe(speed);
-    for (const invalid of [0, 3, 41, 50, 500, 5000, -1, '4', null, undefined]) expect(() => decodeSave({ ...snapshot, speed: invalid }, world.registry)).toThrow();
+    for (const invalid of [0, 3, 40, 41, 50, 500, 5000, -1, '4', null, undefined]) expect(() => decodeSave({ ...snapshot, speed: invalid }, world.registry)).toThrow();
   });
   it('preserves partially recovered terrain and continues identically after reload', () => {
     const world = flatWorld(); world.terrain.set(20, 20, Terrain.Sand);

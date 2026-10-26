@@ -10,6 +10,8 @@ import { assignHouse } from '../src/systems/society';
 import { applyEvent } from '../src/systems/effects';
 import { migrations } from '../src/systems/migration';
 import { advance, flatWorld, pioneerWorld } from './helpers';
+import { deposit } from '../src/core/resource-ledger';
+import { initializeStorage } from '../src/core/stockpiles';
 
 function site(race: RaceId = 'human', distance = 1.8) {
   const world = flatWorld(), worker = world.spawn(RACES[race].entityId, { x: 24 - distance, y: 24 })!;
@@ -17,6 +19,7 @@ function site(race: RaceId = 'human', distance = 1.8) {
   const house = startConstruction(world, { x: 24, y: 24 }, worker)!;
   const village = assignHouse(world, house);
   worker.components.person!.homeId = house.id; worker.components.citizen!.villageId = village.id;
+  initializeStorage(world, village); deposit(village, { wood: 4 }); assignConstruction(world, worker);
   return { world, worker, house };
 }
 
@@ -44,14 +47,14 @@ describe('resident movement and builders', () => {
     const { world, worker, house } = site(race, 6);
     worker.components.motion!.speed = 0;
     advance(world, 2);
-    expect(house.components.dwelling!.construction!.progress).toBe(0);
+    expect(house.components.building!.project!.progress).toBe(0);
     worker.components.motion!.speed = RACES[race].speed;
     advance(world, 0.3);
     expect(residentAction(world, worker)).toBe('carry');
     const phases = new Set<number>(); let hits = 0, previous = 0;
-    for (let i = 0; i < 900 && house.components.dwelling!.construction; i++) {
+    for (let i = 0; i < 900 && house.components.building!.project; i++) {
       world.step();
-      const progress = house.components.dwelling!.construction?.progress ?? 1;
+      const progress = house.components.building!.project?.progress ?? 1;
       if (progress > previous) {
         hits++; phases.add(Math.floor(progress * 4));
         expect(Math.hypot(worker.components.position!.x - 24, worker.components.position!.y - 24)).toBeLessThanOrEqual(2.1);
@@ -60,7 +63,7 @@ describe('resident movement and builders', () => {
       previous = progress;
     }
     expect(hits).toBe(12); expect(phases.size).toBeGreaterThanOrEqual(4);
-    expect(house.components.dwelling!.construction).toBeUndefined();
+    expect(house.components.building!.project).toBeUndefined();
     expect(worker.components.citizen!.task).not.toBe('build');
     expect(house.components.dwelling!.race).toBe(race);
     expect(house.components.health!.max).toBe(RACES[race].houseHealth);
@@ -72,24 +75,24 @@ describe('resident movement and builders', () => {
     worker.components.person!.animation = initialResidentAnimation(0);
     worker.components.person!.animation.work = HAMMER_CONTACT - 0.05;
     construction(world, STEP);
-    expect(house.components.dwelling!.construction!.progress).toBe(0);
+    expect(house.components.building!.project!.progress).toBe(0);
     world.tick++; construction(world, STEP);
-    expect(house.components.dwelling!.construction!.progress).toBeCloseTo(1 / 12);
-    expect(house.components.dwelling!.construction!.struckAt).toBe(world.tick);
+    expect(house.components.building!.project!.progress).toBeCloseTo(1 / 12);
+    expect(house.components.building!.project!.struckAt).toBe(world.tick);
   });
 
   it('keeps abandoned progress and lets another adult finish, without creating another house', () => {
     const { world, worker, house } = site();
     advance(world, 2);
-    const progress = house.components.dwelling!.construction!.progress;
+    const progress = house.components.building!.project!.progress;
     expect(progress).toBeGreaterThan(0); world.remove(worker.id); advance(world, 2);
-    expect(house.components.dwelling!.construction!.progress).toBe(progress);
+    expect(house.components.building!.project!.progress).toBe(progress);
     const replacement = world.spawn('core:person', { x: 20, y: 24 })!;
     replacement.components.person!.buildIn = 10000;
     replacement.components.citizen!.villageId = house.components.dwelling!.villageId;
     expect(assignConstruction(world, replacement)).toBe(true);
     advance(world, 15);
-    expect(house.components.dwelling!.construction).toBeUndefined(); expect(world.houseCount).toBe(1);
+    expect(house.components.building!.project).toBeUndefined(); expect(world.houseCount).toBe(1);
   });
 
   it('excludes children and unreachable sites, suspends burning work and releases destroyed sites', () => {
@@ -99,10 +102,10 @@ describe('resident movement and builders', () => {
     const other = world.spawn('core:person', { x: 30, y: 24 })!;
     for (let y = 0; y < 48; y++) world.terrain.set(27, y, Terrain.Water);
     expect(assignConstruction(world, other)).toBe(false);
-    advance(world, 1); const progress = house.components.dwelling!.construction!.progress;
+    advance(world, 1); const progress = house.components.building!.project!.progress;
     applyEvent(world, { kind: 'heat', target: house.id, amount: 80 });
     advance(world, 0.5);
-    expect(house.components.dwelling!.construction!.progress).toBe(progress);
+    expect(house.components.building!.project!.progress).toBe(progress);
     expect(worker.components.citizen!.task).not.toBe('build');
     world.remove(house.id);
     expect(worker.components.person!.homeId).toBeNull(); expect(worker.components.citizen!.targetId).not.toBe(house.id);
@@ -119,7 +122,7 @@ describe('resident movement and builders', () => {
       const invalid = structuredClone(data); Object.assign(invalid.entities.find(e => e.components.person)!.components.person!.animation!, patch);
       expect(() => decodeSave(invalid, world.registry)).toThrow();
     }
-    const invalid = structuredClone(data); invalid.entities.find(e => e.components.dwelling)!.components.dwelling!.construction!.progress = 2;
+    const invalid = structuredClone(data); invalid.entities.find(e => e.components.dwelling)!.components.building!.project!.progress = 2;
     expect(() => decodeSave(invalid, world.registry)).toThrow();
   });
 
@@ -128,7 +131,7 @@ describe('resident movement and builders', () => {
     const old = world.snapshot(); old.version = 23;
     const migrated = decodeSave(old, world.registry);
     expect(migrated).toEqual({ ...old, version: SAVE_VERSION });
-    expect(migrated.entities.find(e => e.components.dwelling)!.components.dwelling!.construction).toBeUndefined();
+    expect(migrated.entities.find(e => e.components.dwelling)!.components.building!.project).toBeUndefined();
   });
 
   it('gives arriving pioneers a real building site that their adults finish', () => {
@@ -140,11 +143,11 @@ describe('resident movement and builders', () => {
       world.spatial.update(member);
     }
     migrations(world);
-    const house = [...world.query('dwelling')].find(e => e.components.dwelling!.construction)!;
-    expect(house).toBeDefined(); expect(house.components.dwelling!.construction!.progress).toBe(0);
+    const house = [...world.query('dwelling')].find(e => e.components.building!.project)!;
+    expect(house).toBeDefined(); expect(house.components.building!.project!.progress).toBe(0);
     expect(world.society.migrations).toHaveLength(0);
     advance(world, 18);
-    expect(house.components.dwelling!.construction).toBeUndefined();
+    expect(house.components.building!.project).toBeUndefined();
     expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
   });
 });

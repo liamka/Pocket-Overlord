@@ -9,6 +9,112 @@ test.beforeEach(async ({ page }) => {
   await page.routeWebSocket('**', socket => socket.close());
 });
 
+test('ocean continues across map edges and covers the viewport when zoomed out or panned', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  const result = await page.evaluate(async () => {
+    const worldModule = '/src/core/world.ts', rendererModule = '/src/render/renderer.ts', oceanModule = '/src/render/ocean.ts';
+    const { World } = await import(worldModule), { Renderer } = await import(rendererModule), { Ocean } = await import(oceanModule);
+    const template = new World(20, undefined, undefined, []), data = template.snapshot();
+    data.entities = []; data.nextEntityId = 1;
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:fixed;left:0;top:0;width:480px;height:320px'; document.body.append(canvas);
+    const renderer = new Renderer(canvas); renderer.resize();
+    const render = async (width: number, height: number): Promise<Uint8ClampedArray> => {
+      data.terrain = { width, height, tiles: Array(width * height).fill(0), moisture: Array(width * height).fill(0) };
+      const world = new World(20, template.registry, data, []); world.paused = true;
+      Object.assign(renderer.camera, { x: 48, y: 32, zoom: 1 });
+      // Final worker textures must match the terrain exactly, including its edge.
+      for (let frame = 0; frame < 120; frame++) {
+        renderer.draw(world, 0);
+        if (!renderer.ocean.pendingChunks.size) break;
+        await new Promise(requestAnimationFrame);
+      }
+      return canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+    };
+    // Moving the playable boundary through the same water must not change its pixels.
+    const small = await render(48, 48), large = await render(160, 128);
+    const matching = small.every((value, i) => value === large[i]);
+    const ocean = new Ocean(), ctx = canvas.getContext('2d')!;
+    const coverage: { zoom: number; opaque: boolean; colors: number[]; stable: boolean }[] = [];
+    for (const zoom of [1, 0.175, 0.04]) for (const x of [48, -100, 600]) {
+      const draw = (): Uint8ClampedArray => {
+        ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
+        Object.assign(renderer.camera, { x, y: -80, zoom });
+        const origin = renderer.camera.origin;
+        ctx.translate(Math.round(origin.x), Math.round(origin.y)); ctx.scale(zoom, zoom);
+        ocean.drawBackground(ctx, renderer.camera, 20);
+        return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      };
+      const first = draw(), again = draw(), colors = Array.from({ length: 4 }, () => new Set<string>());
+      let opaque = true;
+      for (let y = 0; y < canvas.height; y++) for (let px = 0; px < canvas.width; px++) {
+        const i = (y * canvas.width + px) * 4;
+        if (first[i + 3] !== 255) opaque = false;
+        colors[Number(px >= canvas.width / 2) + Number(y >= canvas.height / 2) * 2].add(`${first[i]},${first[i + 1]},${first[i + 2]}`);
+      }
+      coverage.push({ zoom, opaque, colors: colors.map(set => set.size), stable: first.every((value, i) => value === again[i]) });
+    }
+    canvas.remove();
+    return { matching, coverage };
+  });
+  expect(result.matching).toBe(true);
+  for (const view of result.coverage) {
+    expect(view.opaque).toBe(true);
+    expect(view.stable).toBe(true);
+    expect(view.colors.every(count => count > (view.zoom === 1 ? 1 : 2)), JSON.stringify(view)).toBe(true);
+  }
+});
+
+test('cold ocean zoom builds only bounded previews on the rendering thread', async ({ page }) => {
+  await page.route('**/ocean-performance', route => route.fulfill({ contentType: 'text/html', body: '<canvas width="1440" height="960"></canvas>' }));
+  await page.goto('/ocean-performance');
+  const work = await page.evaluate(async () => {
+    const oceanPath = '/src/render/ocean.ts', cameraPath = '/src/render/camera.ts';
+    const { Ocean } = await import(oceanPath), { Camera } = await import(cameraPath);
+    const ocean = new Ocean(), camera = new Camera(), canvas = document.querySelector('canvas')!;
+    camera.width = canvas.width; camera.height = canvas.height; camera.x = camera.y = 0;
+    const fillRect = CanvasRenderingContext2D.prototype.fillRect, counts: number[] = [];
+    let count = 0;
+    CanvasRenderingContext2D.prototype.fillRect = function (...args) { count++; return fillRect.apply(this, args); };
+    try {
+      for (const zoom of [0.175, 0.26, 0.51, 1]) {
+        camera.zoom = zoom; count = 0;
+        ocean.drawBackground(canvas.getContext('2d')!, camera, 4831);
+        counts.push(count);
+      }
+    } finally { CanvasRenderingContext2D.prototype.fillRect = fillRect; }
+    return counts;
+  });
+  // A zoom must not synchronously paint hundreds of thousands of detailed water pixels.
+  expect(Math.max(...work)).toBeLessThan(25000);
+});
+
+test('a local shore edit repaints only its affected coast and matches a fresh depth map', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  const result = await page.evaluate(async () => {
+    const terrainPath = '/src/core/terrain.ts', oceanPath = '/src/render/ocean.ts';
+    const { TerrainMap } = await import(terrainPath), { Ocean } = await import(oceanPath);
+    const map = new TerrainMap(512, 384), ocean = new Ocean();
+    map.set(256, 192, 3); map.set(257, 192, 3);
+    ocean.update(map); map.dirty.clear();
+    map.set(256, 192, 1); ocean.update(map);
+    const dirty = map.dirty.size, fresh = new Ocean(); fresh.update(map);
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+    const pixels = (source: InstanceType<typeof Ocean>): Uint8ClampedArray => {
+      ctx.setTransform(1, 0, 0, 1, -224 * 8, -160 * 8);
+      for (let y = 160; y < 224; y++) for (let x = 224; x < 288; x++) source.drawTile(ctx, x, y, 4831);
+      return ctx.getImageData(0, 0, 512, 512).data;
+    };
+    const incremental = pixels(ocean), rebuilt = pixels(fresh);
+    return { dirty, matching: incremental.every((value, i) => value === rebuilt[i]) };
+  });
+  expect(result.dirty).toBeLessThan(10000);
+  expect(result.matching).toBe(true);
+});
+
 async function savedWorld(page: Page): Promise<WorldSnapshot | undefined> {
   return page.evaluate(() => new Promise((resolve, reject) => {
     const open = indexedDB.open('little-world', 1);
@@ -21,6 +127,46 @@ async function savedWorld(page: Page): Promise<WorldSnapshot | undefined> {
     };
   }));
 }
+
+test('new maps can start with inhabited settlements, persist them and also start empty', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  await page.locator('#settings').click(); await page.locator('#new-world').click();
+  await page.locator('#world-seed').fill('4');
+  await page.locator('#nature-select').selectOption('grassland');
+  await page.locator('#confirm-new').click();
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  await page.locator('#time-toggle').click();
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(async () => {
+    const saved = await savedWorld(page);
+    return saved?.seed === 4 && saved.paused;
+  }).toBe(true);
+  const saved = (await savedWorld(page))!;
+  expect(saved.society.villages).toHaveLength(3);
+  const residents = saved.entities.filter(e => e.components.person);
+  expect(residents.length).toBeGreaterThanOrEqual(24);
+  await expect(page.locator('#population')).toHaveText(String(residents.length));
+  for (const resident of residents) {
+    const home = saved.entities.find(e => e.id === resident.components.person!.homeId);
+    expect(home?.components.dwelling?.villageId).toBe(resident.components.citizen!.villageId);
+    expect(home?.components.building?.state).toBe('active');
+  }
+  await page.reload();
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  await expect(page.locator('#population')).toHaveText(String(residents.length));
+  expect((await savedWorld(page))!.society.villages).toEqual(saved.society.villages);
+  await page.locator('#settings').click(); await page.locator('#new-world').click();
+  await page.locator('#world-seed').fill('0');
+  await page.locator('#confirm-new').click();
+  await expect(page.locator('#loading-screen')).toBeHidden();
+  await expect.poll(async () => (await savedWorld(page))?.seed).toBe(0);
+  await expect(page.locator('#population')).toHaveText('0');
+  expect((await savedWorld(page))!.society.villages).toHaveLength(0);
+  expect(errors).toEqual([]);
+});
 
 test('automatically creates, renders and reloads a template world without a shape picker', async ({ page }) => {
   const errors: string[] = [];
@@ -85,7 +231,7 @@ test('cancelling a new world preserves the current template', async ({ page }) =
   }
 });
 
-for (const query of ['?changelog=0', '?changelog=true']) {
+for (const query of ['?debug=0', '?debug=true']) {
   test(`keeps the biome picker unavailable with ${query}`, async ({ page }) => {
     await page.goto(`/${query}`);
     await expect(page.locator('#new-world')).toBeEnabled();
@@ -100,7 +246,7 @@ for (const biome of BIOMES) {
   test(`debug mode creates and preserves the selected ${biome.id}`, async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto('/?changelog=1');
+    await page.goto('/?debug=1');
     await expect(page.locator('#new-world')).toBeEnabled();
     await expect.poll(async () => (await savedWorld(page))?.seed).toBeDefined();
     const previous = (await savedWorld(page))!;
@@ -109,7 +255,7 @@ for (const biome of BIOMES) {
     const picker = page.getByLabel('Island shape', { exact: true });
     await expect(picker).toBeVisible();
     expect(await picker.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value)))
-      .toEqual(['', 'dragon', 'turtle', 'phoenix', 'kraken', 'whale', 'yin-yang']);
+      .toEqual(['', 'turtle', 'phoenix', 'kraken', 'whale', 'yin-yang']);
     await picker.selectOption(biome.id);
     expect((await savedWorld(page))!.terrain).toEqual(previous.terrain);
     await page.keyboard.press('Escape');
@@ -142,7 +288,7 @@ for (const biome of BIOMES) {
 }
 
 test('debug mode localizes the picker and keeps automatic generation available', async ({ page }) => {
-  await page.goto('/?preview=world&changelog=1');
+  await page.goto('/?preview=world&debug=1');
   await expect(page.locator('#new-world')).toBeEnabled();
   await expect.poll(async () => (await savedWorld(page))?.seed).toBeDefined();
   const previousSeed = (await savedWorld(page))!.seed;
@@ -151,7 +297,7 @@ test('debug mode localizes the picker and keeps automatic generation available',
   await page.locator('#new-world').click();
   const picker = page.getByLabel('Форма острова', { exact: true });
   await expect(page.getByRole('img', { name: 'Превью нового острова', exact: true })).toBeVisible();
-  await expect(picker.locator('option')).toHaveText(['Случайный', 'Дракон', 'Черепаха', 'Феникс', 'Кракен', 'Кит', 'Инь и Ян']);
+  await expect(picker.locator('option')).toHaveText(['Случайный', 'Черепаха', 'Феникс', 'Кракен', 'Кит', 'Инь и Ян']);
   await picker.selectOption('whale');
   await picker.selectOption('');
   await page.locator('#confirm-new').click();
@@ -161,7 +307,7 @@ test('debug mode localizes the picker and keeps automatic generation available',
 });
 
 test('choosing a biome through the native picker waits for explicit confirmation', async ({ page }) => {
-  await page.goto('/?changelog=1');
+  await page.goto('/?debug=1');
   await expect(page.locator('#new-world')).toBeEnabled();
   await expect.poll(async () => (await savedWorld(page))?.seed).toBeDefined();
   const original = (await savedWorld(page))!;
@@ -194,7 +340,7 @@ test('choosing a biome through the native picker waits for explicit confirmation
   expect(navigations).toEqual([]);
 });
 
-for (const query of ['', '?changelog=1']) {
+for (const query of ['', '?debug=1']) {
   test(`previews nature and island shape changes and creates the displayed map with ${query || 'public mode'}`, async ({ page }) => {
     await page.goto(`/${query}`);
     await expect(page.locator('#loading-screen')).toBeHidden();

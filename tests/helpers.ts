@@ -1,8 +1,28 @@
+import { setForbiddenKnowledge } from '../src/core/world-rules';
 import { createRegistry } from '../src/content/defaults';
 import type { Registry } from '../src/content/registry';
 import { World } from '../src/core/world';
 import { assignHouse } from '../src/systems/society';
-import { STEP, Terrain, type Vec2 } from '../src/core/types';
+import { STEP, Terrain, type Vec2, type Village } from '../src/core/types';
+import { deposit, takeFood } from '../src/core/resource-ledger';
+import { bundleLoad } from '../src/core/resources';
+import { roadIsIntact } from '../src/core/roads';
+import { aboardFerry, waitingForFerry } from '../src/core/ferries';
+import { cancelJob } from '../src/core/jobs';
+import { cancelBehaviour } from '../src/core/behaviour';
+import { assignRepair, continueRepair, roadRepairs } from '../src/systems/road-repair';
+import { movement } from '../src/systems/people';
+import { ferries } from '../src/systems/ferries';
+import { roads } from '../src/systems/society';
+
+/** Fixture supplies must update the physical ledger, including snapshots used as fixtures. */
+export function setFood(village: Village, amount: number, buildingId?: number): void {
+  if (!village.economy?.storage) { village.food = amount; return; }
+  takeFood(village, village.food);
+  const store = village.economy.storage.find(s => buildingId === undefined || s.buildingId === buildingId);
+  if (store) store.capacity = Math.max(store.capacity, bundleLoad(store.goods).volume + amount);
+  deposit(village, { provisions: amount }, buildingId);
+}
 
 export function flatWorld(registry: Registry = createRegistry()): World {
   const source = new World(12345, registry);
@@ -11,7 +31,30 @@ export function flatWorld(registry: Registry = createRegistry()): World {
   snapshot.terrain = { width: 48, height: 48, tiles: new Array(48 * 48).fill(Terrain.Grass), moisture: new Array(48 * 48).fill(0), recovery: [] };
   return new World(snapshot.seed, registry, snapshot);
 }
+/** Editors are explicitly enabled only in fixtures that exercise editing. */
+export function editorWorld(): World { const world = flatWorld(); setForbiddenKnowledge(world, true); return world; }
 export function advance(world: World, seconds: number): void { for (let i = 0; i < Math.round(seconds / STEP); i++) world.step(); }
+
+/** Isolate road labour from unrelated city decisions; movement and ferries remain physical. */
+export function workRoad(world: World, observe?: () => void): void {
+  roads(world);
+  const road = world.society.roads[0], people = [...world.query('person', 'citizen', 'position')];
+  if (!road) throw new Error('No road planned');
+  for (const e of people) { cancelJob(world, e, 'No work needed'); cancelBehaviour(world, e); }
+  for (let n = 0; n < 600 * 30 && !roadIsIntact(world, road); n++) {
+    world.tick++; roads(world);
+    if (world.tick % 15 === 0) {
+      const queue = roadRepairs(world, people);
+      for (const e of people) {
+        e.components.citizen!.reconsiderIn -= 0.5;
+        if (aboardFerry(world, e.id) || waitingForFerry(world, e)) continue;
+        if (!continueRepair(world, e, queue)) assignRepair(world, e, queue);
+      }
+    }
+    ferries(world, STEP); movement(world, STEP); observe?.();
+  }
+  if (!roadIsIntact(world, road)) throw new Error('Road workers did not finish');
+}
 
 export function villageWorld(centers: Vec2[] = [{ x: 8, y: 24 }, { x: 36, y: 24 }]): World {
   const world = flatWorld();

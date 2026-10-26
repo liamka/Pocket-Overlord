@@ -1,0 +1,18 @@
+export const subspeciesMessages = {
+  'Subspecies {id}': ['Подвид {id}', '亚种 {id}', '亜種 {id}', 'Subespecie {id}'],
+  'New subspecies': ['Новый подвид', '新亚种', '新しい亜種', 'Nueva subespecie'],
+  'Living members: {count}': ['Живых носителей: {count}', '存活成员：{count}', '生存数：{count}', 'Miembros vivos: {count}'],
+  'Born here: {born}; deaths: {deaths}; departed: {departed}': ['Рождений: {born}; смертей: {deaths}; выбывших: {departed}', '出生：{born}；死亡：{deaths}；离开：{departed}', '出生：{born}、死亡：{deaths}、離脱：{departed}', 'Nacimientos: {born}; muertes: {deaths}; salidas: {departed}'],
+  'Naturally appeared': ['Возник в природе', '自然出现', '自然発生', 'Apareció en la naturaleza'],
+  'Placed by you': ['Создан вами', '由你放置', 'あなたが配置', 'Creado por ti'],
+  'Founded at birth': ['Возник при рождении', '出生时形成', '誕生時に成立', 'Fundado al nacer'],
+  'Founded after transformation': ['Возник после превращения', '转化后形成', '変身後に成立', 'Fundado tras una transformación'],
+  'Present in the older world': ['Существовал в прежнем мире', '存在于旧世界', '以前の世界から存在', 'Existía en el mundo anterior'],
+  'Founder': ['Основатель', '创始者', '始祖', 'Fundador'],
+  'Shared abilities': ['Общие способности', '共有能力', '共通の能力', 'Capacidades compartidas'],
+  'Guaranteed birth traits': ['Гарантированные черты при рождении', '出生必有特质', '出生時に保証される特性', 'Rasgos garantizados al nacer'],
+  'Without sapience: settlement duties are suspended; carried goods stay with the creature.': ['Без разумности: обязанности в поселении прекращены, груз остаётся у существа.', '失去智慧：停止聚落职责，携带物品留在生物身上。', '知性なし：集落での仕事は停止し、荷物は保持されます。', 'Sin sapiencia: cesan las tareas del asentamiento; la criatura conserva su carga.'],
+  'Shared genes add to the species baseline. Individual changes affect only this creature.': ['Общие гены добавляются к исходным параметрам вида. Личные изменения действуют только на это существо.', '共有基因叠加于物种基础属性。个体变化只影响此生物。', '共通遺伝子は種の基礎値に加算されます。個体の変化はこの生物だけに影響します。', 'Los genes compartidos se suman a los valores de la especie. Los cambios individuales afectan solo a esta criatura.'],
+  'Individual': ['Личное', '个体', '個体', 'Individual'],
+  'Shared profile changed on day {day}': ['Общий профиль изменён: день {day}', '共有特征于第{day}天更改', '共通設定の変更：{day}日目', 'Perfil compartido cambiado el día {day}'],
+} as const;

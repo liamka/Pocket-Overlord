@@ -1,12 +1,12 @@
 import type { ToolDefinition } from '../content/registry';
-import type { GameCommand, SimulationSpeed, Vec2 } from '../core/types';
+import type { GameCommand, Vec2 } from '../core/types';
 import type { Renderer } from '../render/renderer';
 
-const speedKeys: Readonly<Record<string, 0 | SimulationSpeed>> = { '1': 0, '2': 1, '3': 2, '4': 4 };
 const DRAG_THRESHOLD = 4;
 const HOLD_DELAY = 250;
 const TOUCH_HOLD_DELAY = 350;
 const TOUCH_DRAG_THRESHOLD = 8;
+const CAMERA_PAN_SPEED = 600;
 
 interface PointerGesture {
   id: number;
@@ -26,6 +26,7 @@ export interface InputHost {
   dispatch(command: GameCommand): void;
   beginAction?(): void;
   togglePause(): void;
+  stepSpeed(direction: -1 | 1): void;
   dimensions(): Vec2;
   blocked(): boolean;
   cameraChanged(): void;
@@ -39,6 +40,7 @@ export class InputController {
   private lastRain = -Infinity;
   private lastAim: (Vec2 & { toolId: string }) | undefined;
   private readonly held = new Set<string>();
+  private lastUpdate: number | undefined;
   private lastControl = '';
   private controlledTool: string | undefined;
   private readonly touches = new Map<number, Vec2>();
@@ -89,19 +91,34 @@ export class InputController {
       this.updatePoint(event); host.cameraChanged();
     }, { passive: false });
     window.addEventListener('keydown', event => {
+      if (event.code !== 'Space' || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault(); event.stopPropagation();
+      if (event.repeat) return;
+      if (!host.tool().release) release();
+      host.togglePause();
+    }, { capture: true });
+    window.addEventListener('keydown', event => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || host.blocked()) return;
       const target = event.target as HTMLElement;
-      if (target.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (host.tool().control && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].includes(event.code)) {
+      if (target.matches('input, textarea, select, [contenteditable="true"]') || target.closest('#unit-panel')) return;
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)
+        || host.tool().control && ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].includes(event.code)) {
         event.preventDefault(); this.held.add(event.code); this.control(); return;
       }
-      const speed = speedKeys[event.code.replace(/^(Digit|Numpad)/, '')] ?? speedKeys[event.key];
-      if (speed !== undefined) {
-        event.preventDefault(); if (!host.tool().release) release(); host.dispatch({ kind: 'speed', speed }); return;
+      const digit = /^(?:Digit|Numpad)(\d)$/.exec(event.code)?.[1] ?? (/^\d$/.test(event.key) ? event.key : undefined);
+      if (digit !== undefined) {
+        const category = host.tool().category ?? 'nature';
+        const tool = [...host.tools()].filter(tool => (tool.category ?? 'nature') === category)[digit === '0' ? 9 : Number(digit) - 1];
+        if (tool) { event.preventDefault(); release(); host.select(tool.id); }
+        return;
+      }
+      const direction = event.code === 'Equal' || event.code === 'NumpadAdd' || event.key === '+' ? 1
+        : event.code === 'Minus' || event.code === 'NumpadSubtract' || event.key === '-' ? -1 : undefined;
+      if (direction !== undefined) {
+        event.preventDefault(); if (!host.tool().release) release(); host.stepSpeed(direction); return;
       }
       const tool = [...host.tools()].find(t => t.shortcut === event.key);
       if (tool) { event.preventDefault(); release(); host.select(tool.id); }
-      if (event.code === 'Space' && !target.closest('button')) { event.preventDefault(); if (!host.tool().release) release(); host.togglePause(); }
     });
     window.addEventListener('keyup', event => { if (this.held.delete(event.code)) { event.preventDefault(); this.control(); } });
   }
@@ -219,8 +236,10 @@ export class InputController {
       if (this.touchNavigation) {
         const before = this.touchNavigation, after = this.touchSnapshot(), camera = this.renderer.camera;
         const size = this.host.dimensions(), rect = this.renderer.canvas.getBoundingClientRect();
+        // Zoom around the old midpoint, then move it and clamp the final camera position.
+        // Clamping before zoom leaves the camera outside its bounds until a finger lifts.
+        if (before.distance > 0 && after.distance > 0) camera.zoomAt(after.distance / before.distance, before.center.x - rect.left, before.center.y - rect.top);
         camera.pan(after.center.x - before.center.x, after.center.y - before.center.y, size.x, size.y);
-        if (before.distance > 0 && after.distance > 0) camera.zoomAt(after.distance / before.distance, after.center.x - rect.left, after.center.y - rect.top);
         this.touchNavigation = after; this.host.cameraChanged(); return;
       }
     } else if (this.touches.size) return;
@@ -265,9 +284,21 @@ export class InputController {
     this.lastAim = { toolId: tool.id, ...point };
   }
   update(now: number): void {
+    const elapsed = Math.min(50, Math.max(0, now - (this.lastUpdate ?? now))) / 1000;
+    this.lastUpdate = now;
     if (this.host.blocked()) { this.cancel(); return; }
     if (this.gesture && this.gesture.toolId !== this.host.tool().id) this.cancel();
     this.control();
+    if (!this.host.tool().control) {
+      const x = Number(this.held.has('KeyD')) - Number(this.held.has('KeyA'));
+      const y = Number(this.held.has('KeyS')) - Number(this.held.has('KeyW'));
+      const length = Math.hypot(x, y);
+      if (length && elapsed) {
+        const size = this.host.dimensions(), distance = CAMERA_PAN_SPEED * elapsed / length;
+        this.renderer.camera.pan(-x * distance, -y * distance, size.x, size.y);
+        this.host.cameraChanged();
+      }
+    }
     if (this.point && this.renderer.cursor) this.renderer.cursor = this.renderer.camera.screenToWorld(this.point.x, this.point.y);
     this.aim();
     const gesture = this.gesture, tool = this.host.tool();

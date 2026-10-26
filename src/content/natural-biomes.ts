@@ -1,7 +1,8 @@
+import { plantProblem } from '../core/biome-ecology';
 import type { Registry, PixelSprite } from './registry';
-import { SEED_BIOMES } from '../core/natural-biomes';
-import { noise } from '../core/random';
+import { SEED_BIOMES, naturalTreeSite } from '../core/natural-biomes';
 import { Terrain } from '../core/types';
+import { FOREST } from '../core/forestry';
 
 const glyphs = [
   ['...gg...', '..gggg..', '.gggggg.', '..gggg..', '...tt...', '...tt...'],
@@ -32,17 +33,19 @@ export function registerNaturalBiomes(registry: Registry): void {
       icon, color: biome.colors[1], radius: 6, continuous: true, paint: true,
       canApply: (world, point) => {
         let suitable = false;
-        world.terrain.circle(point.x, point.y, 6, (x, y) => { if (world.terrain.canSeed(x, y)) suitable = true; });
+        world.terrain.circle(point.x, point.y, 6, (x, y) => { if (world.terrain.canPaintBiome(x, y)) suitable = true; });
         return suitable;
       },
       apply: (world, point) => {
         world.terrain.circle(point.x, point.y, 6, (x, y) => {
-          if (!world.terrain.canSeed(x, y)) return;
-          world.terrain.setBiome(x, y, biome.id);
+          if (!world.terrain.canPaintBiome(x, y)) return;
+          world.terrain.paintBiome(x, y, biome.id);
           // Stable planting sites keep repeated strokes from packing trees together.
-          if (world.terrain.at(x, y) !== Terrain.Grass || world.terrain.surfaceAt(x, y) || x % 2 || y % 2 || noise(x, y, world.seed + 41) >= biome.trees) return;
-          const p = { x: x + 0.5, y: y + 0.5 };
-          if (world.canStand(p, 1.2) && !world.nearby(p, 4).some(e => e.components.farm || e.components.dwelling || e.components.person)) world.spawn('core:tree', p);
+          if (world.terrain.at(x, y) !== Terrain.Grass || plantProblem(world, { x, y })) return;
+          const p = naturalTreeSite(x, y, world.seed, biome.id);
+          if (!p) return;
+          if (world.canStand(p, 1.2) && !world.nearby(p, 4).some(e => e.components.farm || e.components.dwelling || e.components.person)
+            && world.nearby(p, FOREST.densityRadius).filter(e => e.components.tree).length < FOREST.maxDensity) world.spawn('core:tree', p, 'planted');
         });
       },
     });

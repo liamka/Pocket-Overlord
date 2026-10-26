@@ -1,11 +1,34 @@
+import { hasPhysiology } from '../core/physiology';
+import { hazardAreas, hazardRevision } from '../core/geohazards';
 import type { World } from '../core/world';
+import { canMove } from '../core/creatures';
+import { seaRoute } from '../core/seafaring';
+import type { Entity } from '../core/types';
 import { isRoadSurface, Terrain, type Vec2 } from '../core/types';
 import { noise } from '../core/random';
 import { bridgeCrossing, ferryCrossing } from '../core/roads';
 
 import { ferryAvailable, ferryRoutes } from '../core/ferries';
 
-const grids = new WeakMap<World, { tick: number; revision: number; size: number; blocked: Uint8Array }>();
+const grids = new WeakMap<World, { tick: number; revision: number; hazardRevision: number; size: number; solids: number[]; hazards: number[]; blocked: Uint8Array }>();
+export interface RouteBudget { remaining: number }
+const decisionBudgets = new WeakMap<World, { shared: RouteBudget; remaining: number }>();
+/** A synchronous decision reuses the normal pathfinder, with per-actor and per-tick limits. */
+export function withDecisionRoutes<T>(world: World, shared: RouteBudget, action: () => T): T {
+  const previous = decisionBudgets.get(world);
+  decisionBudgets.set(world, { shared, remaining: 12 });
+  try { return action(); } finally {
+    if (previous) decisionBudgets.set(world, previous); else decisionBudgets.delete(world);
+  }
+}
+/** Reuse each movement contract; no land path is granted to a flying creature. */
+export function creaturePath(world: World, entity: Entity, destination: Vec2, reach = 1.8): Vec2[] | undefined {
+  const start = entity.components.position;
+  if (!start || !world.terrain.inside(destination.x, destination.y)) return;
+  if (canMove(world.registry, entity, 'fly')) return [{ ...destination }];
+  if (canMove(world.registry, entity, 'sail')) return seaRoute(world, start, destination);
+  if (canMove(world.registry, entity, 'walk')) return findPath(world, start, destination, reach, undefined, hasPhysiology(entity, 'aquatic'));
+}
 
 /** A short route to a free shore; swimming never opens water routes for land walkers. */
 export function findShorePath(world: World, start: Vec2, ignoreId: number): Vec2[] {
@@ -30,14 +53,32 @@ export function findShorePath(world: World, start: Vec2, ignoreId: number): Vec2
 }
 
 function obstacles(world: World): Uint8Array {
-  const map = world.terrain, cached = grids.get(world);
-  if (cached && cached.tick === world.tick && cached.revision === map.revision && cached.size === world.entities.size) return cached.blocked;
-  const blocked = Uint8Array.from(map.tiles, (_, i) => Number(!map.isLand(i % map.width, Math.floor(i / map.width))));
-  for (const entity of world.query('solid', 'position')) {
+  const map = world.terrain, cached = grids.get(world), hazardsVersion = hazardRevision(world);
+  if (cached && cached.tick === world.tick && cached.revision === map.revision && cached.hazardRevision === hazardsVersion && cached.size === world.entities.size) return cached.blocked;
+  const solids = [...world.query('solid', 'position')], signature = cached?.solids ?? [];
+  // Geohazards run before planning. Index only active pool footprints, including cooling/shrinking pools.
+  const hazardous = new Set<number>();
+  for (const area of hazardAreas(world)) map.circle(area.x, area.y, area.radius + 0.25, (_x, _y, i) => hazardous.add(i));
+  const hazards = [...hazardous].sort((a, b) => a - b);
+  let changed = !cached || cached.revision !== map.revision || signature.length !== solids.length * 4, at = 0;
+  changed ||= hazards.length !== cached?.hazards.length || hazards.some((i, n) => i !== cached!.hazards[n]);
+  for (const entity of solids) {
+    const p = entity.components.position!;
+    for (const value of [entity.id, p.x, p.y, entity.components.solid!.radius]) {
+      if (signature[at] !== value) { signature[at] = value; changed = true; }
+      at++;
+    }
+  }
+  signature.length = at;
+  if (cached && !changed) { cached.tick = world.tick; cached.hazardRevision = hazardsVersion; cached.size = world.entities.size; return cached.blocked; }
+  const blocked = cached?.blocked ?? new Uint8Array(map.tiles.length);
+  for (let i = 0; i < blocked.length; i++) blocked[i] = Number(!map.canWalk(i % map.width, Math.floor(i / map.width)));
+  for (const entity of solids) {
     const p = entity.components.position!, radius = entity.components.solid!.radius + 0.25;
     map.circle(p.x, p.y, radius, (_x, _y, i) => { blocked[i] = 1; });
   }
-  grids.set(world, { tick: world.tick, revision: map.revision, size: world.entities.size, blocked });
+  for (const i of hazards) blocked[i] = 1;
+  grids.set(world, { tick: world.tick, revision: map.revision, hazardRevision: hazardsVersion, size: world.entities.size, solids: signature, hazards, blocked });
   return blocked;
 }
 
@@ -66,44 +107,146 @@ export function reachableTiles(world: World, starts: Vec2[], maxSteps: number): 
   return distances;
 }
 
-/** Cardinal land paths. People are transient obstacles handled by movement, never by the route grid. */
-export function findPath(world: World, start: Vec2, destination: Vec2, reach = 1.8, canTraverse?: (from: Vec2, to: Vec2) => boolean): Vec2[] | undefined {
+interface PathWorkspace {
+  previous: Int32Array; visited: Uint32Array; distance: Int32Array; priority: Float64Array;
+  heap: Int32Array; slots: Int32Array; generation: number;
+}
+const pathWorkspaces = new WeakMap<World, PathWorkspace>();
+const landRegions = new WeakMap<World, { grid?: object; regions: Int32Array; queue: Int32Array }>();
+
+/** Reject disconnected destinations before A*; custom traversal rules still belong to the search. */
+function sameLandRegion(world: World, start: Vec2, destination: Vec2, reach: number, blocked: Uint8Array): boolean {
+  const map = world.terrain, grid = grids.get(world)!;
+  let cached = landRegions.get(world);
+  if (!cached) {
+    cached = { regions: new Int32Array(map.tiles.length), queue: new Int32Array(map.tiles.length) };
+    landRegions.set(world, cached);
+  }
+  const { regions, queue } = cached;
+  if (cached.grid !== grid) {
+    regions.fill(0);
+    let region = 0;
+    for (let first = 0; first < regions.length; first++) {
+      if (regions[first] || blocked[first]) continue;
+      region++; regions[first] = region; queue[0] = first;
+      let head = 0, tail = 1;
+      const visit = (next: number): void => {
+        if (regions[next] || blocked[next]) return;
+        regions[next] = region; queue[tail++] = next;
+      };
+      while (head < tail) {
+        const current = queue[head++], x = current % map.width;
+        if (x > 0) visit(current - 1);
+        if (x + 1 < map.width) visit(current + 1);
+        if (current >= map.width) visit(current - map.width);
+        if (current + map.width < regions.length) visit(current + map.width);
+      }
+    }
+    cached.grid = grid;
+  }
+  const first = map.index(start.x, start.y), region = regions[first], reachSquared = reach * reach;
+  // A* permits leaving a blocked starting cell (for example, a newly built house).
+  const exits = region ? undefined : new Set([
+    first % map.width > 0 ? regions[first - 1] : 0,
+    first % map.width + 1 < map.width ? regions[first + 1] : 0,
+    first >= map.width ? regions[first - map.width] : 0,
+    first + map.width < regions.length ? regions[first + map.width] : 0,
+  ]);
+  for (let y = Math.max(0, Math.floor(destination.y - reach)); y <= Math.min(map.height - 1, Math.floor(destination.y + reach)); y++) {
+    for (let x = Math.max(0, Math.floor(destination.x - reach)); x <= Math.min(map.width - 1, Math.floor(destination.x + reach)); x++) {
+      const target = regions[y * map.width + x];
+      if (target && (target === region || exits?.has(target)) && (x + 0.5 - destination.x) ** 2 + (y + 0.5 - destination.y) ** 2 <= reachSquared) return true;
+    }
+  }
+  return false;
+}
+
+/** A* uses reusable buffers; ferry shortcuts use Dijkstra's zero heuristic. */
+export function findPath(world: World, start: Vec2, destination: Vec2, reach = 1.8, canTraverse?: (from: Vec2, to: Vec2) => boolean, amphibious = false): Vec2[] | undefined {
+  const budget = decisionBudgets.get(world);
+  if (budget) {
+    if (budget.remaining <= 0 || budget.shared.remaining <= 0) return;
+    budget.remaining--; budget.shared.remaining--;
+  }
   const map = world.terrain;
-  if (!map.isLand(start.x, start.y) || !map.isLand(destination.x, destination.y)) return;
-  const blocked = obstacles(world), first = map.index(start.x, start.y);
+  if (!map.inside(start.x, start.y) || !map.inside(destination.x, destination.y) || !amphibious && (!map.isLand(start.x, start.y) || !map.isLand(destination.x, destination.y)) || reach < 0) return;
+  const blocked = amphibious ? obstacles(world).slice() : obstacles(world), first = map.index(start.x, start.y);
+  if (amphibious) for (let y = Math.max(0, Math.floor(Math.min(start.y, destination.y)) - 8); y <= Math.min(map.height - 1, Math.ceil(Math.max(start.y, destination.y)) + 8); y++)
+    for (let x = Math.max(0, Math.floor(Math.min(start.x, destination.x)) - 8); x <= Math.min(map.width - 1, Math.ceil(Math.max(start.x, destination.x)) + 8); x++)
+      if (map.isOpenWater(x, y) && world.canStand({ x: x + 0.5, y: y + 0.5 }, 0.17, -1, true)) blocked[y * map.width + x] = 0;
   const crossings = new Map<number, number[]>();
-  for (const { road, ferry } of ferryRoutes(world)) if (ferryAvailable(world, road, ferry)) {
+  for (const { road, ferry } of amphibious ? [] : ferryRoutes(world)) if (ferryAvailable(world, road, ferry)) {
     const a = road.tiles[ferry.start], b = road.tiles[ferry.end];
     crossings.set(a, [...crossings.get(a) ?? [], b]); crossings.set(b, [...crossings.get(b) ?? [], a]);
   }
-  const previous = new Int32Array(map.tiles.length).fill(-1), queue = new Int32Array(map.tiles.length);
-  let head = 0, tail = 1; queue[0] = first; previous[first] = first;
-  while (head < tail) {
-    const current = queue[head++], x = current % map.width, y = Math.floor(current / map.width);
-    if (!blocked[current] && Math.hypot(x + 0.5 - destination.x, y + 0.5 - destination.y) <= reach) {
+  if (!amphibious && !crossings.size && !sameLandRegion(world, start, destination, reach, blocked)) return;
+  let workspace = pathWorkspaces.get(world);
+  if (!workspace) {
+    const n = map.tiles.length;
+    workspace = { previous: new Int32Array(n), visited: new Uint32Array(n), distance: new Int32Array(n),
+      priority: new Float64Array(n), heap: new Int32Array(n), slots: new Int32Array(n), generation: 0 };
+    pathWorkspaces.set(world, workspace);
+  }
+  const { previous, visited, distance, priority, heap, slots } = workspace;
+  if (++workspace.generation === 0xffffffff) { visited.fill(0); workspace.generation = 1; }
+  const generation = workspace.generation, reachSquared = reach * reach;
+  let count = 0;
+  const heuristic = (i: number): number => crossings.size ? 0 : Math.max(0,
+    Math.abs(i % map.width + 0.5 - destination.x) + Math.abs(Math.floor(i / map.width) + 0.5 - destination.y) - reach * Math.SQRT2);
+  const before = (a: number, b: number): boolean => priority[a] < priority[b]
+    || priority[a] === priority[b] && (distance[a] > distance[b] || distance[a] === distance[b] && a < b);
+  const push = (i: number): void => {
+    let slot = slots[i];
+    if (slot < 0) slot = count++;
+    while (slot > 0) {
+      const parent = (slot - 1) >> 1, other = heap[parent];
+      if (!before(i, other)) break;
+      heap[slot] = other; slots[other] = slot; slot = parent;
+    }
+    heap[slot] = i; slots[i] = slot;
+  };
+  visited[first] = generation; previous[first] = first; distance[first] = 0; priority[first] = heuristic(first); slots[first] = -1; push(first);
+  while (count) {
+    const current = heap[0], last = heap[--count]; slots[current] = -1;
+    if (count) {
+      let slot = 0;
+      while (slot * 2 + 1 < count) {
+        let child = slot * 2 + 1;
+        if (child + 1 < count && before(heap[child + 1], heap[child])) child++;
+        if (!before(heap[child], last)) break;
+        heap[slot] = heap[child]; slots[heap[slot]] = slot; slot = child;
+      }
+      heap[slot] = last; slots[last] = slot;
+    }
+    const x = current % map.width, y = Math.floor(current / map.width);
+    if (!blocked[current] && (x + 0.5 - destination.x) ** 2 + (y + 0.5 - destination.y) ** 2 <= reachSquared) {
       const path: Vec2[] = [];
       for (let i = current; i !== first; i = previous[i]) path.push({ x: i % map.width + 0.5, y: Math.floor(i / map.width) + 0.5 });
-      // Keep the departure bank when a ferry is the very first step.
       if (path.length && crossings.get(first)?.includes(map.index(path.at(-1)!.x, path.at(-1)!.y))) path.push({ x: first % map.width + 0.5, y: Math.floor(first / map.width) + 0.5 });
       return path.reverse();
     }
-    for (const next of crossings.get(current) ?? []) {
-      if (previous[next] !== -1 || blocked[next]) continue;
-      previous[next] = current; queue[tail++] = next;
-    }
-    for (const [nx, ny] of [[x + 1, y], [x, y + 1], [x - 1, y], [x, y - 1]]) {
-      if (!map.inside(nx, ny)) continue;
-      const next = ny * map.width + nx;
-      if (previous[next] !== -1 || blocked[next]) continue;
-      if (canTraverse && !canTraverse(current === first ? start : { x: x + 0.5, y: y + 0.5 }, { x: nx + 0.5, y: ny + 0.5 })) continue;
-      previous[next] = current; queue[tail++] = next;
-    }
+    const visit = (next: number, ferry = false): void => {
+      const cost = distance[current] + 1;
+      if (blocked[next] || visited[next] === generation && distance[next] <= cost) return;
+      if (!ferry && canTraverse && !canTraverse(current === first ? start : { x: x + 0.5, y: y + 0.5 },
+        { x: next % map.width + 0.5, y: Math.floor(next / map.width) + 0.5 })) return;
+      if (visited[next] !== generation) slots[next] = -1;
+      visited[next] = generation; distance[next] = cost; previous[next] = current; priority[next] = cost + heuristic(next); push(next);
+    };
+    for (const next of crossings.get(current) ?? []) visit(next, true);
+    if (x + 1 < map.width) visit(current + 1);
+    if (y + 1 < map.height) visit(current + map.width);
+    if (x > 0) visit(current - 1);
+    if (y > 0) visit(current - map.width);
   }
 }
 
+const roadGrids = new WeakMap<World, { grid: object; blocked: Uint8Array; costs: Float64Array }>();
 /** Construction follows valleys and clearings, while walking keeps its own traversal rules. */
 function roadTerrain(world: World): { blocked: Uint8Array; costs: Float64Array } {
-  const map = world.terrain, blocked = obstacles(world).slice(), costs = new Float64Array(map.tiles.length).fill(1);
+  const map = world.terrain, obstaclesGrid = obstacles(world), grid = grids.get(world)!, cached = roadGrids.get(world);
+  if (cached?.grid === grid) return cached;
+  const blocked = obstaclesGrid.slice(), costs = new Float64Array(map.tiles.length).fill(1);
   const clearance = new Uint8Array(map.tiles.length).fill(4), queue = new Int32Array(map.tiles.length);
   let head = 0, tail = 0;
   for (let i = 0; i < map.tiles.length; i++) {
@@ -134,10 +277,12 @@ function roadTerrain(world: World): { blocked: Uint8Array; costs: Float64Array }
     });
   }
   for (let i = 0; i < costs.length; i++) if (isRoadSurface(map.tiles[i])) costs[i] = 0.65;
-  return { blocked, costs };
+  const result = { grid, blocked, costs };
+  roadGrids.set(world, result);
+  return result;
 }
 
-function roadRoute(world: World, start: Vec2, destination: Vec2, reach: number, blocked: Uint8Array, costs: Float64Array, allowFerries: boolean): Vec2[] | undefined {
+function roadRoute(world: World, start: Vec2, destination: Vec2, reach: number, blocked: Uint8Array, costs: Float64Array, allowFerries: boolean, allowed?: (tile: number) => boolean): Vec2[] | undefined {
   const map = world.terrain, first = map.index(start.x, start.y);
   const previous = new Int32Array(map.tiles.length).fill(-1), distances = new Float64Array(map.tiles.length).fill(Infinity);
   type Entry = { tile: number; distance: number; estimate: number };
@@ -188,7 +333,7 @@ function roadRoute(world: World, start: Vec2, destination: Vec2, reach: number, 
       if (map.tiles[next] < Terrain.Sand) {
         const bridge = bridgeCrossing(world, tile, nx - x, ny - y);
         const crossing = bridge ?? (allowFerries ? ferryCrossing(world, tile, nx - x, ny - y) : undefined);
-        if (!crossing) continue;
+        if (!crossing || allowed && !crossing.every(allowed)) continue;
         next = crossing.at(-1)!; bridgeCost = (crossing.length - 1) * (bridge ? 4 : 6) + (bridge ? 0 : 12);
       }
       if (blocked[next]) continue;
@@ -200,11 +345,16 @@ function roadRoute(world: World, start: Vec2, destination: Vec2, reach: number, 
 }
 
 /** Shape roads independently of walking routes, retaining edge-connected, obstacle-free tiles. */
-export function findRoadPath(world: World, start: Vec2, destination: Vec2, reach = 2.2, allowFerries = false): Vec2[] | undefined {
+export function findRoadPath(world: World, start: Vec2, destination: Vec2, reach = 2.2, allowFerries = false, allowed?: (tile: number) => boolean): Vec2[] | undefined {
   const map = world.terrain;
   if (!map.isLand(start.x, start.y) || !map.isLand(destination.x, destination.y)
     || map.at(start.x, start.y) === Terrain.Mountain || map.at(destination.x, destination.y) === Terrain.Mountain) return;
-  const { blocked, costs } = roadTerrain(world), path = roadRoute(world, start, destination, reach, blocked, costs, allowFerries);
+  const grid = roadTerrain(world), costs = grid.costs, blocked = allowed ? grid.blocked.slice() : grid.blocked;
+  if (allowed) {
+    if (!allowed(map.index(start.x, start.y))) return;
+    for (let i = 0; i < blocked.length; i++) if (!allowed(i)) blocked[i] = 1;
+  }
+  const path = roadRoute(world, start, destination, reach, blocked, costs, allowFerries, allowed);
   if (!path?.length) return path;
   const result: Vec2[] = [];
   // Bridges and their banks stay straight; smooth the land approaches independently.

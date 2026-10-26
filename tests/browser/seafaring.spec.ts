@@ -1,3 +1,4 @@
+import { assignHouse } from '../../src/systems/society';
 import { expect, test } from '@playwright/test';
 import { flatWorld } from '../helpers';
 import { Terrain, type WorldSnapshot } from '../../src/core/types';
@@ -41,13 +42,13 @@ test('the real renderer animates voyages and wakes, freezes on pause and restore
   await page.route('**/seafaring-render-fixture', route => route.fulfill({ contentType: 'text/html', body: '<canvas style="width:900px;height:700px"></canvas>' }));
   await page.goto('/seafaring-render-fixture');
   const result = await page.evaluate(async () => {
-    const paths = ['/src/core/world.ts', '/src/render/renderer.ts', '/src/systems/seafaring.ts', '/src/persistence/schema.ts'];
-    const [{ World }, { Renderer }, { buildHarbor }, { decodeSave }] = await Promise.all(paths.map(path => import(path)));
+    const paths = ['/src/core/world.ts', '/src/render/renderer.ts', '/src/persistence/schema.ts'];
+    const [{ World }, { Renderer }, { decodeSave }] = await Promise.all(paths.map(path => import(path)));
     const source = new World(12345), data = source.snapshot();
     data.entities = []; data.nextEntityId = 1;
     data.terrain = { width: 48, height: 48, tiles: Array.from({ length: 48 * 48 }, (_, i) => i % 48 < 9 ? 3 : 1), moisture: Array(48 * 48).fill(0), recovery: [] };
     let world = new World(12345, source.registry, data);
-    const port = buildHarbor(world, { x: 8.5, y: 24.5 }); port.components.harbor.built = 1;
+    world.spawn('core:harbor', { x: 8.5, y: 24.5 });
     const canvas = document.querySelector('canvas')!, renderer = new Renderer(canvas);
     renderer.resize(); renderer.camera.fit(48, 48); renderer.draw(world, 0); const start = canvas.toDataURL();
     for (let i = 0; i < 240; i++) { world.step(); renderer.draw(world, (i + 1) * 1000 / 30); }
@@ -67,6 +68,7 @@ test('the real renderer animates voyages and wakes, freezes on pause and restore
 
 test('harbor and ship tools work through the real UI and survive saving and reload', async ({ page }) => {
   const world = flatWorld(); world.paused = true;
+  assignHouse(world, world.spawn('core:house', { x: 18.5, y: 24.5 })!);
   for (let y = 0; y < 48; y++) for (let x = 24; x < 48; x++) world.terrain.set(x, y, Terrain.Water);
   await page.route('**/seafaring-storage-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Storage setup</title>' }));
   await page.goto('/seafaring-storage-fixture');

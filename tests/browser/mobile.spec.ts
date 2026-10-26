@@ -15,23 +15,23 @@ const state = (page: Page) => page.evaluate(() => {
 const touch = (session: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', points: { id: number; x: number; y: number }[]) =>
   session.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(p => ({ ...p, radiusX: 2, radiusY: 2, force: 1 })) });
 
-async function fixture(page: Page): Promise<void> {
+async function fixture(page: Page, dimensions = { x: 48, y: 48 }): Promise<void> {
   await page.route('**/mobile-input', route => route.fulfill({ contentType: 'text/html', body: `<meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0}canvas{width:100vw;height:100dvh;touch-action:none}#controls{position:fixed;bottom:0;left:0}button{width:64px;height:64px;touch-action:none}</style><canvas tabindex="0"></canvas><div id="controls"><button data-control="KeyD">Right</button><button data-control="attack">Attack</button></div>` }));
   await page.goto('/mobile-input');
-  await page.evaluate(async () => {
+  await page.evaluate(async dimensions => {
     const paths = ['/src/input/controller.ts', '/src/render/renderer.ts', '/src/content/defaults.ts'];
     const [{ InputController }, { Renderer }, { createRegistry }] = await Promise.all(paths.map(path => import(path)));
-    const renderer = new Renderer(document.querySelector('canvas')!); renderer.resize(); renderer.camera.fit(48, 48);
+    const renderer = new Renderer(document.querySelector('canvas')!); renderer.resize(); renderer.camera.fit(dimensions.x, dimensions.y);
     const f: MobileGlobal['mobileFixture'] = { renderer, commands: [], tool: 'core:human', blocked: false };
     (globalThis as MobileGlobal).mobileFixture = f;
     const registry = createRegistry(), controller = new InputController(renderer, {
       tool: () => registry.tools.get(f.tool), select: (id: string) => { f.tool = id; }, tools: () => registry.tools.values(),
-      dispatch: (command: GameCommand) => f.commands.push(command), togglePause: () => {},
-      dimensions: () => ({ x: 48, y: 48 }), blocked: () => f.blocked, cameraChanged: () => {},
+      dispatch: (command: GameCommand) => f.commands.push(command), togglePause: () => {}, stepSpeed: () => {},
+      dimensions: () => dimensions, blocked: () => f.blocked, cameraChanged: () => {},
     });
     controller.bindTouchControls(document.querySelector('#controls'));
     const update = (now: number) => { controller.update(now); requestAnimationFrame(update); }; requestAnimationFrame(update);
-  });
+  }, dimensions);
 }
 
 test('a real touchscreen tap applies exactly one power', async ({ page }) => {
@@ -78,6 +78,31 @@ test('pinching keeps the map under the midpoint and lifting either finger never 
   expect((await state(page)).commands.filter(c => c.kind === 'use-tool')).toHaveLength(0);
   await page.touchscreen.tap(195, 300);
   expect((await state(page)).commands.filter(c => c.kind === 'use-tool')).toHaveLength(1);
+});
+
+for (const scenario of [
+  { name: 'zooming out', dimensions: { x: 48, y: 48 }, y: 150, distances: [160, 120, 80, 40, 20] },
+  { name: 'zooming in', dimensions: { x: 512, y: 384 }, y: 550, distances: [20, 40, 80, 120, 160] },
+]) for (const lifted of [0, 1]) test(`${scenario.name} near a map edge does not jump when finger ${lifted} lifts`, async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Native multi-touch injection uses the Chromium device protocol.');
+  await fixture(page, scenario.dimensions);
+  const session = await page.context().newCDPSession(page);
+  const points = (distance: number) => [{ id: 0, x: 195 - distance, y: scenario.y }, { id: 1, x: 195 + distance, y: scenario.y }];
+  // Wait for native touch events to reach the page before comparing camera positions.
+  const settled = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const before = await state(page);
+  await touch(session, 'touchStart', points(scenario.distances[0]));
+  for (const distance of scenario.distances.slice(1)) {
+    await touch(session, 'touchMove', points(distance)); await settled();
+  }
+  const zoomed = await state(page);
+  if (scenario.name === 'zooming in') expect(zoomed.zoom).toBeGreaterThan(before.zoom);
+  else expect(zoomed.zoom).toBeLessThan(before.zoom);
+  await touch(session, 'touchEnd', [points(scenario.distances.at(-1)!)[lifted]]); await settled();
+  expect(await state(page)).toEqual(zoomed);
+  await touch(session, 'touchEnd', []); await settled();
+  expect(await state(page)).toEqual(zoomed);
+  expect(zoomed.commands.filter(c => c.kind === 'use-tool')).toHaveLength(0);
 });
 
 test('holding arms painting and beams, while a second finger immediately releases a beam', async ({ page, browserName }) => {

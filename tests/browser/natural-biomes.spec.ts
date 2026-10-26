@@ -39,10 +39,13 @@ async function savedWorld(page: Page): Promise<WorldSnapshot> {
   return JSON.parse(serialized);
 }
 
-for (const [first, second] of [[NaturalBiome.Swamp, NaturalBiome.Desert], [NaturalBiome.Enchanted, NaturalBiome.Corrupted]]) {
-test(`${NATURAL_BIOMES[first].key} brushes paint with left-drag, preserve the camera, save and reload, and keep right-drag for panning`, async ({ page }) => {
+for (const [first, second] of [[NaturalBiome.Grassland, NaturalBiome.Desert], [NaturalBiome.Swamp, NaturalBiome.Desert], [NaturalBiome.Enchanted, NaturalBiome.Corrupted]]) {
+test(`${NATURAL_BIOMES[first].key} brushes replace water and sand with left-drag, save and reload, and keep right-drag for panning`, async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const world = flatWorld(); world.paused = true;
+  for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) {
+    world.terrain.set(x, y, x < 20 ? Terrain.DeepWater : x < 25 ? Terrain.Water : Terrain.Sand);
+  }
   await installWorld(page, world.snapshot());
   await page.locator('[data-category="biomes"]').click();
   for (const biome of SEED_BIOMES) await expect(page.getByRole('button', { name: biome.label, exact: true })).toBeVisible();
@@ -53,13 +56,24 @@ test(`${NATURAL_BIOMES[first].key} brushes paint with left-drag, preserve the ca
   const start = camera.worldToScreen(16, 24), end = camera.worldToScreen(30, 24);
   await page.mouse.move(start.x, start.y); await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 20 }); await page.mouse.up();
+  await expect.poll(async () => (await savedWorld(page)).terrain.tiles[24 * 48 + 30]).toBe(Terrain.Grass);
   await expect.poll(async () => (await savedWorld(page)).terrain.biomes?.[24 * 48 + 30]).toBe(first);
   const painted = await savedWorld(page);
-  for (let x = 16; x <= 30; x++) expect(painted.terrain.biomes![24 * 48 + x]).toBe(first);
+  for (let x = 16; x <= 30; x++) {
+    expect(painted.terrain.biomes![24 * 48 + x]).toBe(first);
+    expect(painted.terrain.tiles[24 * 48 + x]).toBe(Terrain.Grass);
+  }
   expect(painted.tick).toBe(0);
-  expect(painted.terrain.tiles).toEqual(world.terrain.tiles);
+  for (const x of [10, 22, 30]) expect(painted.terrain.tiles[10 * 48 + x]).toBe(world.terrain.at(x, 10));
+  if (first === NaturalBiome.Grassland) {
+    await page.locator('#undo').click();
+    await expect.poll(async () => (await savedWorld(page)).terrain).toEqual(world.terrain.snapshot());
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 20 }); await page.mouse.up();
+    await expect.poll(async () => (await savedWorld(page)).terrain).toEqual(painted.terrain);
+  }
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
-  expect((await savedWorld(page)).terrain.biomes).toEqual(painted.terrain.biomes);
+  expect((await savedWorld(page)).terrain).toEqual(painted.terrain);
   await page.locator('[data-category="biomes"]').click();
   await page.getByRole('button', { name: NATURAL_BIOMES[second].label, exact: true }).click();
   await page.mouse.move(start.x, start.y); await page.mouse.down({ button: 'right' });
@@ -72,11 +86,11 @@ test(`${NATURAL_BIOMES[first].key} brushes paint with left-drag, preserve the ca
 });
 }
 
-test('renders all biomes, localizes every brush, and keeps tools accessible at different widths', async ({ page }) => {
+test('renders one biome, localizes every brush, and keeps tools accessible at different widths', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const world = new World(20); world.paused = true;
   await installWorld(page, world.snapshot());
-  expect(new Set(world.terrain.biomes).size).toBe(NATURAL_BIOMES.length);
+  expect(new Set(world.terrain.biomes).size).toBe(1);
   await page.locator('[data-category="biomes"]').click();
   for (const language of languages) {
     await page.locator('#settings').click(); await page.locator('#language-select').selectOption(language.id);
@@ -107,7 +121,7 @@ for (const biome of NATURAL_BIOMES) {
     await installWorld(page, world.snapshot());
     await page.locator('#settings').click(); await page.locator('#new-world').click();
     const picker = page.getByRole('combobox', { name: 'Nature', exact: true });
-    await expect(picker.locator('option')).toHaveText(['Mixed biomes', ...NATURAL_BIOMES.map(b => b.name)]);
+    await expect(picker.locator('option')).toHaveText(NATURAL_BIOMES.map(b => b.name));
     await picker.selectOption(biome.key);
     expect((await savedWorld(page)).terrain).toEqual(world.snapshot().terrain);
     await page.locator('#confirm-new').click();
@@ -132,7 +146,7 @@ for (const biome of NATURAL_BIOMES) {
   });
 }
 
-test('cancelling a nature choice keeps the current world and mixed biomes remain available', async ({ page }) => {
+test('cancelling keeps the current world and the preselected biome survives creation and reload', async ({ page }) => {
   const world = flatWorld(); world.paused = true;
   await installWorld(page, world.snapshot());
   for (const cancel of ['button', 'escape']) {
@@ -145,13 +159,16 @@ test('cancelling a nature choice keeps the current world and mixed biomes remain
   }
   await page.locator('#settings').click(); await page.locator('#new-world').click();
   const picker = page.getByRole('combobox', { name: 'Nature', exact: true });
-  await picker.selectOption('');
+  const selectedKey = await picker.inputValue();
+  const selected = NATURAL_BIOMES.find(biome => biome.key === selectedKey);
+  expect(selected).toBeDefined();
   await page.locator('#confirm-new').click();
   await expect(page.locator('#loading-screen')).toBeHidden();
   await expect.poll(async () => (await savedWorld(page)).terrain.width).toBe(512);
   const ground = (await savedWorld(page)).terrain;
-  const biomes = ground.tiles.flatMap((tile, i) => tile === Terrain.Grass ? [ground.biomes![i]] : []);
-  expect(new Set(biomes).size).toBeGreaterThan(1);
+  expect(new Set(ground.biomes)).toEqual(new Set([selected!.id]));
+  await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
+  expect((await savedWorld(page)).terrain).toEqual(ground);
 });
 
 test('localizes the nature picker and waits for confirmation after native keyboard selection', async ({ page }) => {
@@ -161,7 +178,7 @@ test('localizes the nature picker and waits for confirmation after native keyboa
     await page.locator('#settings').click(); await page.locator('#language-select').selectOption(language.id);
     await page.locator('#new-world').click();
     const picker = page.getByRole('combobox', { name: translate('Nature', language.id), exact: true });
-    await expect(picker.locator('option')).toHaveText(['Mixed biomes', ...NATURAL_BIOMES.map(b => b.name)].map(name => translate(name, language.id)));
+    await expect(picker.locator('option')).toHaveText(NATURAL_BIOMES.map(b => translate(b.name, language.id)));
     await page.keyboard.press('Escape');
   }
   await page.locator('#settings').click(); await page.locator('#language-select').selectOption('en');

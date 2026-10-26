@@ -1,15 +1,26 @@
+import { hasTrait } from '../core/traits';
+import { isAdult } from '../core/unit-stats';
+import { carriedItems, equippedItem } from '../core/equipment';
+import { EQUIPMENT } from '../core/equipment-catalog';
+import type { ResourceId } from '../core/resources';
 import type { Entity, ResidentAnimation } from '../core/types';
 import type { RaceId } from '../core/races';
 import { raceOf } from '../core/races';
 import type { World } from '../core/world';
 import { initialResidentAnimation, residentAction, type ResidentAction } from '../core/resident-animation';
 import { plagueSeverity } from '../core/afflictions';
+import { phenotypeColors } from '../core/phenotypes';
+import type { ColorRoles } from '../content/phenotypes';
+import { resolveBodyColors } from './appearance';
 
 type Point = readonly [number, number];
 export interface ResidentPose extends Partial<ResidentAnimation> {
   time?: number; variant?: number; race?: RaceId; child?: boolean; color?: string;
-  sickness?: number; rage?: boolean;
-  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'stone-axe' | 'pickaxe' | 'bucket' | 'bandage' | 'feed'; load?: 'planks' | 'pack' | 'grain' | 'flour' | 'bread' | 'tools' | 'stone' | 'stoneAxes';
+  wise?: boolean;
+  body?: ColorRoles;
+  protection?: Partial<Record<'helmet' | 'armor' | 'boots', 'leather' | 'metal'>>;
+  sickness?: number; rage?: boolean; emotion?: 'happy_laughing' | 'crying';
+  action?: ResidentAction; tool?: 'hammer' | 'hoe' | 'sword' | 'stone-axe' | 'pickaxe' | 'bucket' | 'bandage' | 'feed' | 'bow' | 'spear' | 'staff' | 'blaster'; load?: 'planks' | 'pack' | ResourceId;
 }
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w = 1, h = 1): void => {
   ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
@@ -36,18 +47,18 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   ctx.save(); if (child) ctx.scale(0.75, 0.75);
   const wide = race === 'orc' || race === 'dwarf', short = race === 'dwarf', elf = race === 'elf';
   const sick = (pose.sickness ?? 0) > 0.15;
-  const skin = sick ? race === 'orc' ? '#98a35c' : '#bbb580' : race === 'orc' ? '#8bb456' : short ? '#e4b986' : elf ? '#edcfaa' : '#e6bf91';
-  const shade = sick ? '#7b8050' : race === 'orc' ? '#567a38' : '#be9068';
+  // Skin pixels use their own color mask; sleeves, hair, equipment and markers retain their palettes.
+  const body = resolveBodyColors(race, pose.body, sick), skin = body.middle, shade = body.shadow;
   const shirt = pose.color ?? (elf ? '#8fb76b' : race === 'orc' ? '#a77d48' : short ? '#bd8c51' : ['#ead6a0', '#a7cad1', '#d9947e', '#c7aed4', '#e6be76'][variant % 5]);
   const dark = elf ? '#365b3d' : race === 'orc' ? '#5e4730' : short ? '#686e70' : '#4d635f';
-  const boots = elf ? '#40563b' : '#453e38';
+  const boots = pose.protection?.boots === 'leather' ? '#73482f' : pose.protection?.boots ? '#778b81' : elf ? '#40563b' : '#453e38';
   const walking = action === 'walk' || action === 'carry', swimming = action === 'swim';
   const blend = walking ? moving : 0, swing = Math.sin(stride), facing = Math.cos(heading) < -0.05 ? -1 : 1;
   const back = Math.sin(heading) < -0.4, front = Math.abs(Math.cos(heading)) < 0.45;
   const working = action === 'build' || action === 'repair' || action === 'farm' || action === 'fight' || action === 'extinguish' || action === 'aid';
   const contact = working ? Math.max(0, 1 - Math.abs(work - 0.65) / 0.17) : 0;
   const cough = sick && !working && !swimming && action !== 'carry' ? Math.max(0, Math.sin(time * 1.8) - 0.78) / 0.22 : 0;
-  const bob = -Math.abs(swing) * 0.65 * blend + (action === 'idle' ? Math.sin(time * 2.3) * 0.16 : 0) + contact * 0.55 + cough;
+  const bob = -Math.abs(swing) * 0.65 * blend + (action === 'idle' ? Math.sin(time * (pose.emotion === 'happy_laughing' ? 12 : 2.3)) * (pose.emotion === 'happy_laughing' ? 0.6 : 0.16) : 0) + contact * 0.55 + cough;
   const lean = facing * (contact * 0.8 + cough * 1.5) + Math.cos(heading) * blend * 0.25;
   const chestY = (short ? -5 : -7) + bob, headY = chestY - (elf ? 5 : 4);
   const shoulder = (wide ? 3.5 : 2.5) * (front ? 1 : 0.85);
@@ -58,7 +69,7 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
     const hip: Point = [side * (wide ? 1.7 : 1.1) + lean, -1 + (walking || working ? bob : 0)];
     const foot: Point = [side * (wide ? 1.7 : 1.1) + Math.cos(heading) * step, 2 + Math.sin(heading) * step * 0.6 - lift];
     const knee: Point = [(hip[0] + foot[0]) / 2 - facing * lift * 0.3, (hip[1] + foot[1]) / 2 - lift * 0.25];
-    limb(ctx, boots, hip, knee, 2); limb(ctx, side < 0 ? boots : '#6c6350', knee, foot, 2);
+    limb(ctx, boots, hip, knee, 2); limb(ctx, pose.protection?.boots || side < 0 ? boots : '#6c6350', knee, foot, 2);
     pixel(ctx, '#353a33', foot[0] + (facing < 0 ? -1 : 0), foot[1] + 1, 3, 1);
   }
   const toolAngle = hammerAngle(work);
@@ -89,12 +100,19 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   pixel(ctx, dark, lean - shoulder, chestY, shoulder * 2 + 1, short ? 5 : 6);
   pixel(ctx, shirt, lean - shoulder + 1, chestY, shoulder * 2 - 1, short ? 4 : 5);
   pixel(ctx, '#9e8052', lean - shoulder + 1, -2 + bob, shoulder * 2 - 1, 1);
+  if (pose.protection?.armor) {
+    const hide = pose.protection.armor === 'leather';
+    pixel(ctx, hide ? '#8c5a37' : '#81938c', lean - shoulder, chestY, shoulder * 2 + 1, short ? 5 : 6);
+    pixel(ctx, hide ? '#e1bc82' : '#c3cbc1', lean, chestY, 1, short ? 4 : 5);
+    if (hide) pixel(ctx, '#533a2d', lean - shoulder, -2 + bob, shoulder * 2 + 1, 1);
+  }
   if (action === 'build' || action === 'repair' || action === 'carry' && pose.load !== 'pack') {
     pixel(ctx, '#73573d', lean - 2, chestY + 3, 5, 4); pixel(ctx, '#b79962', lean - 1, chestY + 3, 3, 3);
   }
   const hx = lean + (front ? 0 : facing * 0.6), headW = wide ? 6 : 5;
   pixel(ctx, shade, hx - headW / 2, headY, headW, 5);
   pixel(ctx, skin, hx - headW / 2, headY, headW - 1, 4);
+  if (body.highlight) pixel(ctx, body.light, hx - headW / 2, headY + 1, 1, 2);
   if (elf) {
     pixel(ctx, skin, hx - 5, headY + 1, 3, 1); pixel(ctx, skin, hx + 2, headY + 1, 3, 1);
     pixel(ctx, variant % 2 ? '#c5ae6d' : '#e3d49a', hx - 2, headY - 2, 5, 2);
@@ -110,13 +128,22 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
     pixel(ctx, variant % 2 ? '#604a36' : '#8b6844', hx - 3, headY - 1, 6, 2);
     pixel(ctx, '#6a4d36', hx - facing * 2, headY + 1, 1, back ? 3 : 1);
   }
-  if (back) pixel(ctx, race === 'orc' ? '#567a38' : short ? '#78817b' : elf ? '#c5ae6d' : '#6a4d36', hx - 2, headY + 1, 4, 3);
+  if (pose.wise) pixel(ctx, '#c9c7bc', hx - 3, headY - 1, 6, 2);
+  if (pose.protection?.helmet) {
+    const hide = pose.protection.helmet === 'leather';
+    pixel(ctx, hide ? '#a97848' : '#aab8b2', hx - headW / 2 - 1, headY - 2, headW + 2, 2);
+    pixel(ctx, hide ? '#65432f' : '#536965', hx - headW / 2 - 1, headY, headW + 2, 1);
+    if (hide) pixel(ctx, '#e1bc82', hx, headY - 2, 1, 2);
+  }
+  if (back) pixel(ctx, race === 'orc' ? body.back : short ? '#78817b' : elf ? '#c5ae6d' : '#6a4d36', hx - 2, headY + 1, 4, 3);
   else {
     const eye = pose.rage ? '#a33027' : '#303b32';
     pixel(ctx, eye, hx + (front ? -1 : facing * 2), headY + 2);
     if (front) pixel(ctx, eye, hx + 2, headY + 2);
     else pixel(ctx, skin, hx + facing * 3, headY + 3, 1, 1);
     if (pose.rage) pixel(ctx, '#643b2f', hx + (front ? -1 : facing * 2), headY + 1, front ? 4 : 2);
+    if (pose.emotion === 'crying') pixel(ctx, '#70c5e8', hx + facing * 2, headY + 3 + Math.floor(time * 5) % 3);
+    if (pose.emotion === 'happy_laughing') pixel(ctx, '#654336', hx + facing, headY + 4, 2, 1);
   }
   if (pose.load === 'pack') {
     pixel(ctx, '#705138', lean - facing * 3 - 2, chestY + 1, 4, 6); pixel(ctx, '#c5a171', lean - facing * 3 - 1, chestY + 1, 3, 5);
@@ -124,10 +151,13 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
   const hand = arms(facing);
   if (action === 'carry' && pose.load !== 'pack') {
     if (pose.load && pose.load !== 'planks') {
-      const shade = pose.load === 'stone' ? '#929f99' : pose.load === 'flour' ? '#eee1ba' : pose.load === 'bread' ? '#d9a155' : '#bba06b';
+      const shade = pose.load === 'gold' ? '#f4c94f' : pose.load === 'silver' ? '#b2d7d7' : pose.load === 'stone' ? '#929f99' : pose.load === 'flour' ? '#eee1ba' : pose.load === 'bread' ? '#d9a155' : '#bba06b';
       pixel(ctx, '#69563a', -5 + lean, chestY - 2, 11, 8); pixel(ctx, shade, -4 + lean, chestY - 3, 9, 8);
       if (pose.load === 'tools' || pose.load === 'stoneAxes') { pixel(ctx, pose.load === 'stoneAxes' ? '#9daaa3' : '#d5dfce', -2 + lean, chestY - 5, 6, 3); pixel(ctx, '#725137', lean, chestY - 3, 2, 5); }
       else if (pose.load === 'stone') { pixel(ctx, '#c3ccc0', -3 + lean, chestY - 4, 4, 3); pixel(ctx, '#5f716c', lean, chestY, 3, 2); }
+      else if (pose.load === 'gems') { pixel(ctx, '#9c78cb', -2 + lean, chestY - 4, 5, 5); pixel(ctx, '#e1cdff', -1 + lean, chestY - 4, 2, 3); }
+      else if (pose.load === 'bone') { pixel(ctx, '#eee2bc', -3 + lean, chestY - 2, 7, 2); pixel(ctx, '#eee2bc', -3 + lean, chestY - 3, 2, 4); pixel(ctx, '#eee2bc', 2 + lean, chestY - 3, 2, 4); }
+      else if (pose.load === 'leather') { pixel(ctx, '#995f3a', -3 + lean, chestY - 4, 7, 6); pixel(ctx, '#d5a66c', -2 + lean, chestY - 4, 5, 2); pixel(ctx, '#623f31', -2 + lean, chestY, 5, 1); }
       else { pixel(ctx, '#7c653e', -1 + lean, chestY - 4, 3, 2); pixel(ctx, '#fff0c4', -3 + lean, chestY - 1, 2, 3); }
     } else {
     for (let i = 0; i < 3; i++) {
@@ -149,12 +179,18 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
     }
   } else if (pose.tool === 'bandage' || action === 'aid') {
     pixel(ctx, '#f0e7cc', hand[0], hand[1], 4, 3); pixel(ctx, '#8aac88', hand[0] + 1, hand[1], 1, 3);
-  } else if (pose.tool || working) {
+  } else if (pose.tool || working && action !== 'fight') {
     const tool = pose.tool ?? (action === 'farm' ? 'hoe' : action === 'fight' ? 'sword' : 'hammer');
-    const angle = working ? toolAngle : 1.2 + swing * blend * 0.12, length = tool === 'hoe' ? 7 : 4;
+    const angle = working ? toolAngle : 1.2 + swing * blend * 0.12, length = tool === 'spear' || tool === 'staff' ? 11 : tool === 'hoe' ? 7 : 4;
     const tip: Point = [hand[0] + Math.cos(heading) * Math.cos(angle) * length, hand[1] + Math.sin(angle) * length + Math.sin(heading) * Math.cos(angle) * length * 0.55];
     limb(ctx, tool === 'sword' ? '#d3ded7' : '#947246', hand, tip);
-    if (tool === 'sword') limb(ctx, '#c6a76a', [hand[0] - 1, hand[1]], [hand[0] + 2, hand[1]]);
+    if (tool === 'bow') {
+      ctx.strokeStyle = '#b89a64'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(hand[0], hand[1] - 2, 5, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+      limb(ctx, '#e3dcb5', [hand[0], hand[1] - 7], [hand[0], hand[1] + 3]);
+    } else if (tool === 'spear') pixel(ctx, '#cbd9cf', tip[0] - 1, tip[1] - 3, 3, 5);
+    else if (tool === 'staff') pixel(ctx, '#95e0d8', tip[0] - 2, tip[1] - 2, 4, 4);
+    else if (tool === 'blaster') pixel(ctx, '#7faab4', hand[0], hand[1] - 3, 8, 4);
+    else if (tool === 'sword') limb(ctx, '#c6a76a', [hand[0] - 1, hand[1]], [hand[0] + 2, hand[1]]);
     else if (tool === 'stone-axe') {
       pixel(ctx, '#53605e', tip[0] - 3, tip[1] - 2, 6, 5);
       pixel(ctx, '#aab5ab', tip[0] - 3, tip[1] - 2, 4, 4);
@@ -179,15 +215,33 @@ export function drawResidentSprite(ctx: CanvasRenderingContext2D, pose: Resident
 
 export function drawResident(ctx: CanvasRenderingContext2D, world: World, entity: Entity, color?: string): void {
   const person = entity.components.person!, c = entity.components.citizen;
+  const play = c?.behaviour?.status === 'active' && c.behaviour.taskId === 'reflection' ? c.behaviour.stageId : '';
+  ctx.save();
+  if (play === 'play_jump') ctx.translate(0, -Math.abs(Math.sin(world.tick / 5)) * 5);
+  if (play === 'play_spin') ctx.scale(Math.cos(world.tick / 5), 1);
+  if (play === 'play_dance') { ctx.translate(Math.sin(world.tick / 4) * 2, 0); ctx.rotate(Math.sin(world.tick / 5) * 0.15); }
   const action = residentAction(world, entity);
+  const protection: ResidentPose['protection'] = {};
+  for (const slot of ['helmet', 'armor', 'boots'] as const) {
+    const worn = equippedItem(world, entity.id, slot);
+    if (worn) protection[slot] = EQUIPMENT[worn.definition].material === 'leather' ? 'leather' : 'metal';
+  }
+  const item = equippedItem(world, entity.id, 'weapon'), kind = item && EQUIPMENT[item.definition].kind;
+  const weapon: ResidentPose['tool'] = !item ? undefined : kind === 'bow' ? 'bow' : kind === 'spear' ? 'spear'
+    : kind?.includes('staff') || kind === 'stick' ? 'staff' : kind === 'blaster' || kind === 'shotgun' ? 'blaster'
+    : kind?.includes('hammer') ? 'hammer' : kind?.includes('axe') ? 'stone-axe' : 'sword';
   drawResidentSprite(ctx, { ...(person.animation ?? initialResidentAnimation(entity.components.motion?.heading)), action,
-    time: world.tick / 30 + entity.id * 0.37, variant: entity.components.appearance?.variant, race: raceOf(entity), child: person.age < 18, color,
-    sickness: plagueSeverity(entity), rage: !!person.madness,
-    load: c?.task === 'migrate' ? 'pack' : c?.work?.cargo ? c.work.cargo.good === 'wood' ? 'planks' : c.work.cargo.good : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
-      : c?.task === 'tend' ? 'feed' : c?.task === 'work' && c.work?.good === 'stone' ? 'pickaxe'
+    time: world.tick / 30 + entity.id * 0.37, variant: entity.components.appearance?.variant, race: raceOf(entity), child: !isAdult(entity), color,
+    body: phenotypeColors(entity), protection,
+    wise: hasTrait(entity, 'wise'), sickness: plagueSeverity(entity), rage: !!person.madness,
+    emotion: entity.components.citizen?.behaviour?.status === 'active' && entity.components.citizen.behaviour.taskId === 'reflection'
+      ? entity.components.citizen.behaviour.stageId === 'crying' ? 'crying' : entity.components.citizen.behaviour.stageId === 'happy_laughing' ? 'happy_laughing' : undefined : undefined,
+    load: c?.task === 'migrate' ? 'pack' : c?.work?.cargo ? c.work.cargo.good === 'leather' || c.work.cargo.byproducts?.leather ? 'leather' : c.work.cargo.good === 'wood' ? 'planks' : c.work.cargo.good : carriedItems(world, entity.id).length ? 'pack' : 'planks', tool: c?.emergency ? c.emergency.kind === 'extinguish' ? 'bucket' : c.emergency.kind === 'aid' ? 'bandage' : undefined
+      : c?.jobAssignment?.kind === 'hunter' ? weapon : c?.task === 'tend' ? 'feed' : c?.task === 'work' && (c.work?.good === 'stone' || c.work?.good === 'silver' || c.work?.good === 'gold' || c.work?.good === 'bone' || c.work?.good === 'commonMetal' || c.work?.good === 'gems') ? 'pickaxe'
       : c?.task === 'build' || c?.task === 'repair' || c?.task === 'work' ? 'hammer' : c?.task === 'farm' ? 'hoe'
-      : c?.task === 'fight' || c?.task === 'guard' ? c.weapon ?? 'sword' : c?.weapon });
-  const top = person.age < 18 ? -17 : -21;
+      : weapon });
+  ctx.restore();
+  const top = !isAdult(entity) ? -17 : -21;
   if (person.plague) {
     const time = person.plague.age, severity = plagueSeverity(entity), y = top + Math.sin(time * 2 + entity.id) * 0.5;
     // A small olive skull remains readable at map scale; symptoms develop gradually.
@@ -208,7 +262,7 @@ export function drawResident(ctx: CanvasRenderingContext2D, world: World, entity
   }
   const neighbor = world.entities.get(c?.targetId ?? -1)?.components.position, p = entity.components.position!;
   if (c?.task === 'socialize' && !c.emergency && neighbor && Math.hypot(p.x - neighbor.x, p.y - neighbor.y) <= 2.2) {
-    const y = person.age < 18 ? -22 : -28;
+    const y = !isAdult(entity) ? -22 : -28;
     pixel(ctx, '#f5eed8', -4, y, 9, 5); pixel(ctx, '#f5eed8', -2, y + 5, 2, 2);
     for (let i = 0; i < 3; i++) pixel(ctx, '#5c6c5c', -2 + i * 2, y + 2);
   }

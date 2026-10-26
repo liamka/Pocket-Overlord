@@ -54,7 +54,7 @@ export class HouseCollapseAnimations {
     const image = document.createElement('canvas'); image.width = image.height = SIZE;
     const ctx = image.getContext('2d')!, color = dwelling.villageId ? villageColor(dwelling.villageId) : undefined;
     ctx.translate(LEFT, TOP);
-    if (dwelling.construction) drawConstruction(ctx, house, tick, color);
+    if (house.components.building?.project) drawConstruction(ctx, house, tick, color);
     else {
       drawSprite(ctx, 'house', appearance?.variant, tick / 30, false, 0, color, raceOf(house));
       if (color) {

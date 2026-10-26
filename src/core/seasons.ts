@@ -1,4 +1,5 @@
-export const SEASON_TICKS = 1800;
+import { calendarAt, MONTHS_PER_SEASON, SEASON_TICKS } from './calendar';
+export { SEASON_TICKS } from './calendar';
 export const SEASONS = [
   { id: 'spring', label: 'Spring', growth: 1, yield: 8, appetite: 1 },
   { id: 'summer', label: 'Summer', growth: 1.25, yield: 8, appetite: 1 },
@@ -7,8 +8,8 @@ export const SEASONS = [
 ] as const;
 
 /** The saved simulation tick is the calendar: pause, speed and reload cannot desynchronize it. */
-export const seasonAt = (tick: number): typeof SEASONS[number] => SEASONS[Math.floor(tick / SEASON_TICKS) % SEASONS.length];
-export const yearAt = (tick: number): number => 1 + Math.floor(tick / (SEASON_TICKS * SEASONS.length));
+export const seasonAt = (tick: number): typeof SEASONS[number] => SEASONS[Math.floor((calendarAt(tick).month - 1) / MONTHS_PER_SEASON)];
+export const yearAt = (tick: number): number => calendarAt(tick).year;
 
 /** Keep winter meals at home; caravans may only carry the surplus. */
 export function foodReserve(tick: number, residents: number): number {

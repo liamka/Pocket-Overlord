@@ -1,3 +1,5 @@
+import { lawEnabled } from '../core/world-rules';
+import { statusStops } from '../core/status-effects';
 import type { Registry } from './registry';
 import type { Entity, Vec2, WorldViewport } from '../core/types';
 import { Terrain, WORLD_HEIGHT, WORLD_WIDTH } from '../core/types';
@@ -138,21 +140,22 @@ function wander(world: World, p: Vec2, state: UfoState): void {
   state.goalY = Math.max(1, Math.min(world.terrain.height - 1, p.y + Math.sin(angle) * distance));
 }
 
-function strike(world: World, p: Vec2): void {
-  world.events.push({ kind: 'surface', ...p, radius: UFO.radius, terrain: Terrain.Scorched },
-    { kind: 'surface', ...p, radius: 1, terrain: Terrain.Crater });
+function strike(world: World, p: Vec2, sourceId: number): void {
+  world.events.push({ kind: 'surface', origin: 'heat-ray', ...p, radius: UFO.radius, terrain: Terrain.Scorched },
+    { kind: 'surface', origin: 'heat-ray', ...p, radius: 1, terrain: Terrain.Crater });
   world.visual({ kind: 'blast', ...p, radius: UFO.radius });
-  for (const victim of world.nearby(p, UFO.radius)) {
+  for (const victim of world.nearby(p, UFO.radius).sort((a, b) => a.id - b.id)) {
     // Ground strikes cannot hit the saucer hovering above their impact point.
     if (victim.components.ufo || victim.components.dragon || victim.components.projectile) continue;
     const q = victim.components.position!, force = 1 - Math.hypot(q.x - p.x, q.y - p.y) / UFO.radius;
-    world.events.push({ kind: 'heat', target: victim.id, amount: 140 * force },
-      { kind: 'damage', target: victim.id, amount: 300 * force });
+    world.events.push({ kind: 'heat', target: victim.id, amount: 140 * force, sourceId },
+      { kind: 'damage', target: victim.id, amount: 300 * force, cause: 'conflict', sourceId });
   }
 }
 
 function fly(world: World, dt: number): void {
   for (const entity of world.query('ufo', 'position')) {
+    if (statusStops(entity)) continue;
     const p = entity.components.position!, state = entity.components.ufo!;
     state.age += dt; state.attackIn = Math.max(0, state.attackIn - dt);
     state.thinkIn = Math.max(0, state.thinkIn - dt);
@@ -168,10 +171,12 @@ function fly(world: World, dt: number): void {
       continue;
     }
     if (state.age + 1e-9 >= UFO.lifetime) { depart(world, entity); continue; }
+    const peaceful = lawEnabled(world, 'peaceful-monsters');
+    if (peaceful) { state.targetId = null; state.phase = 'cruise'; state.phaseTime = 0; }
     if (state.phase !== 'cruise') {
       const before = state.phaseTime;
       state.phaseTime += dt;
-      if (state.phase === 'beam' && before < UFO.contact && state.phaseTime >= UFO.contact) strike(world, p);
+      if (state.phase === 'beam' && before < UFO.contact && state.phaseTime >= UFO.contact) strike(world, p, entity.id);
       if (state.phaseTime + 1e-9 >= UFO[state.phase]) {
         if (state.phase === 'charge') state.phase = 'beam';
         else if (state.phase === 'beam') state.phase = 'recover';
@@ -186,7 +191,7 @@ function fly(world: World, dt: number): void {
     let target = world.entities.get(state.targetId ?? -1);
     if (!target || !prey(target)) { target = undefined; state.targetId = null; }
     if (state.thinkIn === 0) {
-      if (state.attackIn === 0) {
+      if (!peaceful && state.attackIn === 0) {
         let best = Infinity;
         for (const candidate of world.nearby(p, 64)) {
           if (!prey(candidate)) continue;
