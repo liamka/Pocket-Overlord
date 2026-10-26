@@ -16,7 +16,12 @@ import { UI } from './ui';
 const registry = createRegistry();
 const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 if (!debugMode) {
-  for (const id of ['core:stockpile', 'core:stockpile-fireproof', 'core:stockpile-acidproof', 'core:cancel-construction', 'core:clear-ruins']) {
+  for (const id of [
+    'core:stockpile', 'core:stockpile-fireproof', 'core:stockpile-acidproof', 'core:cancel-construction', 'core:clear-ruins',
+    'core:warm', 'core:cool', 'core:temple', 'core:mine', 'core:inspect-tile', 'core:food-plant',
+    'core:cloud-life', 'core:cloud-snow', 'core:cloud-rain', 'core:cloud-ash', 'core:cloud-magic',
+    'core:cloud-rage', 'core:cloud-hell', 'core:cloud-lava', 'core:cloud-acid', 'core:disperse-clouds',
+  ]) {
     registry.tools.delete(id);
   }
 }
