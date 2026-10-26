@@ -7,6 +7,7 @@ const HOLD_DELAY = 250;
 const TOUCH_HOLD_DELAY = 350;
 const TOUCH_DRAG_THRESHOLD = 8;
 const CAMERA_PAN_SPEED = 600;
+const CAMERA_ZOOM_SPEED = 1.2;
 
 interface PointerGesture {
   id: number;
@@ -101,7 +102,7 @@ export class InputController {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || host.blocked()) return;
       const target = event.target as HTMLElement;
       if (target.matches('input, textarea, select, [contenteditable="true"]') || target.closest('#unit-panel')) return;
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX'].includes(event.code)
         || host.tool().control && ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].includes(event.code)) {
         event.preventDefault(); this.held.add(event.code); this.control(); return;
       }
@@ -298,6 +299,12 @@ export class InputController {
         this.renderer.camera.pan(-x * distance, -y * distance, size.x, size.y);
         this.host.cameraChanged();
       }
+    }
+    const zoomDirection = Number(this.held.has('KeyZ')) - Number(this.held.has('KeyX'));
+    if (zoomDirection && elapsed) {
+      const camera = this.renderer.camera, previousZoom = camera.zoom;
+      camera.zoomAt(Math.exp(zoomDirection * CAMERA_ZOOM_SPEED * elapsed), camera.width / 2, camera.height / 2);
+      if (camera.zoom !== previousZoom) this.host.cameraChanged();
     }
     if (this.point && this.renderer.cursor) this.renderer.cursor = this.renderer.camera.screenToWorld(this.point.x, this.point.y);
     this.aim();
