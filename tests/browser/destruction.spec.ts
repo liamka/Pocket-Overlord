@@ -131,7 +131,7 @@ test('land and water blasts show distinct phases, remain visible at high speed a
     const results = [];
     for (const water of [false, true]) {
       const source = new World(4831), data = source.snapshot();
-      data.entities = []; data.nextEntityId = 1; data.speed = 40;
+      data.entities = []; data.nextEntityId = 1; data.speed = 20;
       data.terrain = { width: 48, height: 48, tiles: Array(48 * 48).fill(water ? 1 : 3), moisture: Array(48 * 48).fill(0), recovery: [] };
       const world = new World(4831, source.registry, data);
       renderer.draw(world, 1000); const ground = canvas.toDataURL();

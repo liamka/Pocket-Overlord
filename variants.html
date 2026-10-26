@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Варианты шапки — Pocket Overlord</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/fonts/ark-pixel-10.css" />
+    <link rel="stylesheet" href="/variants/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Открыть Pocket Overlord">
+        <img src="/favicon.svg" width="36" height="36" alt="" />
+        <span>Pocket Overlord</span>
+      </a>
+      <a class="itch-link" href="https://liamka.itch.io/pocket-overlord" target="_blank" rel="noopener">Страница на itch.io ↗</a>
+    </header>
+    <main>
+      <div class="intro">
+        <div><h1>10 миров для одной шапки</h1><p>Открой вариант, чтобы примерить его на нашем морском фоне.</p></div>
+        <a class="ocean-link" href="/variants/ocean-background.png" target="_blank" rel="noopener">Посмотреть фон</a>
+      </div>
+      <div class="gallery" id="gallery"></div>
+      <noscript>Для просмотра галереи включи JavaScript.</noscript>
+    </main>
+    <dialog id="preview" aria-labelledby="preview-title">
+      <div class="preview-toolbar">
+        <div><span id="preview-count" class="counter"></span><h2 id="preview-title"></h2></div>
+        <button id="close-preview" class="close-button" aria-label="Закрыть предпросмотр">Закрыть <span aria-hidden="true">×</span></button>
+      </div>
+      <div class="preview-sea"><img id="preview-image" alt="" /></div>
+      <div class="preview-footer">
+        <p id="preview-description"></p>
+        <div class="preview-actions">
+          <button id="previous" aria-label="Предыдущий вариант">←</button>
+          <button id="next" aria-label="Следующий вариант">→</button>
+          <a id="download" download>Скачать PNG</a>
+        </div>
+      </div>
+    </dialog>
+    <script type="module" src="/variants/main.js"></script>
+  </body>
+</html>

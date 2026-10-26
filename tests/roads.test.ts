@@ -11,7 +11,7 @@ import { landscape } from '../src/systems/landscape';
 import { movement } from '../src/systems/people';
 import { assignRepair, continueRepair, roadRepairs } from '../src/systems/road-repair';
 import { applyEvent, processEvents } from '../src/systems/effects';
-import { advance, flatWorld, villageWorld } from './helpers';
+import { setFood, advance, flatWorld, villageWorld, workRoad } from './helpers';
 
 function expectContinuous(world: World, path: Vec2[]): void {
   expect(path.length).toBeGreaterThan(0);
@@ -23,6 +23,35 @@ function expectContinuous(world: World, path: Vec2[]): void {
 }
 
 describe('road shape', () => {
+  it('rejects disconnected islands before exploring routes, but respects reach and newly opened crossings', () => {
+    const world = flatWorld(), start = { x: 8.5, y: 20.5 }, end = { x: 38.5, y: 20.5 };
+    for (let y = 0; y < 48; y++) world.terrain.set(24, y, Terrain.Water);
+    let visits = 0;
+    expect(findPath(world, start, end, 0, () => { visits++; return true; })).toBeUndefined();
+    expect(visits).toBe(0);
+    expect(findPath(world, { x: 23.5, y: 20.5 }, { x: 25.5, y: 20.5 }, 2.1)).toEqual([]);
+    world.terrain.set(24, 20, Terrain.Grass);
+    expect(findPath(world, start, end, 0)).toHaveLength(30);
+  });
+  it('reuses searches without stale paths after terrain and obstacle changes', () => {
+    const world = flatWorld(), start = { x: 8.5, y: 8.5 }, end = { x: 18.5, y: 8.5 };
+    expect(findPath(world, start, end, 0)).toHaveLength(10);
+    for (let y = 0; y < 48; y++) world.terrain.set(12, y, Terrain.Water);
+    expect(findPath(world, start, end, 0)).toBeUndefined();
+    world.terrain.set(12, 10, Terrain.Grass);
+    const route = findPath(world, start, end, 0)!;
+    expect(route).toHaveLength(14);
+    expect(route).toContainEqual({ x: 12.5, y: 10.5 });
+    const tree = world.spawn('core:tree', { x: 12.5, y: 10.5 })!;
+    let visits = 0;
+    expect(findPath(world, start, end, 0, () => { visits++; return true; })).toBeUndefined();
+    expect(visits).toBe(0);
+    world.remove(tree.id); world.tick++;
+    expect(findPath(world, start, end, 0)).toEqual(route);
+    expect(findPath(world, end, start, 0)).toHaveLength(14);
+    expect(findPath(world, start, end, 0, (_a, b) => b.y < 10)).toBeUndefined();
+    expect(findPath(world, start, end, 0)).toEqual(route);
+  });
   it.each([[38.5, 38.5], [8.5, 38.5], [38.5, 8.5], [8.5, 8.5]])('connects diagonal settlements without long square elbows toward %s, %s', (x, y) => {
     const world = flatWorld(), start = { x: 47 - x, y: 47 - y }, destination = { x, y };
     const path = findRoadPath(world, start, destination)!;
@@ -63,7 +92,7 @@ describe('road shape', () => {
 
   it('builds and reloads the shaped road with the existing save format', () => {
     const world = villageWorld([{ x: 8, y: 8 }, { x: 38, y: 38 }]);
-    advance(world, 22);
+    workRoad(world);
     const road = world.society.roads[0];
     expect(roadIsIntact(world, road)).toBe(true);
     const path = road.tiles.map(i => ({ x: i % 48 + 0.5, y: Math.floor(i / 48) + 0.5 }));
@@ -149,8 +178,7 @@ function riverWorld(span = 2, vertical = false): World {
 }
 
 function finishRoad(world: World): void {
-  roads(world);
-  for (let i = 0; i < 100 && world.society.roads[0].built < world.society.roads[0].tiles.length; i++) { world.tick += 30; roads(world); }
+  workRoad(world);
   expect(roadIsIntact(world, world.society.roads[0])).toBe(true);
 }
 
@@ -166,11 +194,10 @@ describe('river bridges', () => {
     const road = world.society.roads[0], river = road.tiles.filter(i => world.terrain.tiles[i] === Terrain.Water);
     expect(river).toHaveLength(span);
     expect(world.terrain.tiles.some(isBridge)).toBe(false);
-    while (road.built < road.tiles.length) {
-      world.tick += 30; roads(world);
+    workRoad(world, () => {
       const built = river.filter(i => isBridge(world.terrain.tiles[i])).length;
-      expect([0, span]).toContain(built);
-    }
+      if (built < span) expect(findPath(world, world.findFreePosition(a)!, b)).toBeUndefined();
+    });
     expect(roadIsIntact(world, road)).toBe(true);
     expect(river.every(i => world.terrain.tiles[i] === (vertical ? Terrain.BridgeVertical : Terrain.BridgeHorizontal))).toBe(true);
     expect(world.terrain.tiles.filter(t => t === Terrain.Water)).toHaveLength(span * 48 - span);
@@ -207,7 +234,7 @@ describe('river bridges', () => {
     expect(world.terrain.isLand(walker.components.position!.x, walker.components.position!.y)).toBe(true);
     world.remove(walker.id);
     for (const state of world.terrain.roadWear.values()) state.age = 240;
-    world.society.villages[0].food = 60; world.society.villages[1].food = 0;
+    setFood(world.society.villages[0], 60); setFood(world.society.villages[1], 0);
     expect(dispatchCaravan(world, 1, 2)).toBe(true);
     advance(world, road.tiles.length / 2.2 + 3);
     expect(world.society.villages[1].food).toBe(12);
@@ -298,7 +325,7 @@ function repairWorld(): World {
     for (const i of road.tiles) world.terrain.set(i % 48, Math.floor(i / 48), Terrain.Road);
   }
   for (const r of world.society.relations) r.nextDecision = 1e9;
-  for (const v of world.society.villages) v.food = 500;
+  for (const v of world.society.villages) setFood(v, 500);
   for (const e of world.query('person')) e.components.person!.sex = 'b';
   return world;
 }
@@ -363,7 +390,7 @@ describe('road destruction and repair', () => {
     for (const e of [...world.query('person')]) world.remove(e.id);
     world.addRain({ x: tile % 48, y: Math.floor(tile / 48) }, 4, 3);
     advance(world, 400);
-    expect(world.terrain.tiles[tile]).toBe(Terrain.Grass);
+    expect(world.terrain.tiles[tile]).toBe(Terrain.Sand);
     expect(roadIsIntact(world, world.society.roads[0])).toBe(false);
   });
 

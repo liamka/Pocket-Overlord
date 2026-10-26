@@ -6,7 +6,7 @@ import { caravans, dispatchCaravan } from '../src/systems/caravans';
 import { declareWar } from '../src/systems/diplomacy';
 import { applyEvent, processEvents } from '../src/systems/effects';
 import { villages } from '../src/systems/society';
-import { advance, villageWorld } from './helpers';
+import { setFood, advance, villageWorld } from './helpers';
 
 function tradingWorld(): World {
   const source = villageWorld(), snapshot = source.snapshot();
@@ -14,7 +14,7 @@ function tradingWorld(): World {
   const tiles = Array.from({ length: 29 }, (_, i) => 26 * 48 + i + 8);
   for (const i of tiles) snapshot.terrain.tiles[i] = Terrain.Road;
   snapshot.society.roads = [{ a: 1, b: 2, tiles, built: tiles.length }];
-  snapshot.society.villages[0].food = 60; snapshot.society.villages[1].food = 0;
+  setFood(snapshot.society.villages[0], 60); setFood(snapshot.society.villages[1], 0);
   // Isolate transport accounting from meals, harvests and diplomacy decisions.
   return new World(snapshot.seed, source.registry, snapshot, [{ id: 'core:caravans', update: caravans }]);
 }
@@ -33,20 +33,20 @@ describe('caravans', () => {
     expect(wagon.components.position!.x).toBeGreaterThan(start.x);
     expect(world.terrain.at(wagon.components.position!.x, wagon.components.position!.y)).toBe(Terrain.Road);
     expect(world.society.villages[1].food).toBe(0);
-    advance(world, 12);
+    for (let i = 0; i < 450 && !wagon.components.caravan!.returning; i++) world.step();
     expect(wagon.components.caravan!.returning).toBe(true); expect(wagon.components.caravan!.food).toBe(0);
     expect(world.society.villages.map(v => v.food)).toEqual([48, 12]);
-    advance(world, 13);
+    for (let i = 0; i < 450 && world.entities.has(wagon.id); i++) world.step();
     expect([...world.query('caravan')]).toHaveLength(0); expect(world.population).toBe(population);
     expect(world.society.villages.map(v => v.food)).toEqual([48, 12]);
   });
   it('keeps reserves and refuses duplicate shipments, unfinished roads and war routes', () => {
     const world = tradingWorld(), road = world.society.roads[0];
     road.built--; expect(dispatchCaravan(world, 1, 2)).toBe(false); road.built++;
-    world.society.villages[0].food = 8; expect(dispatchCaravan(world, 1, 2)).toBe(false);
-    world.society.villages[0].food = 13; expect(dispatchCaravan(world, 1, 2)).toBe(true);
+    setFood(world.society.villages[0], 8); expect(dispatchCaravan(world, 1, 2)).toBe(false);
+    setFood(world.society.villages[0], 13); expect(dispatchCaravan(world, 1, 2)).toBe(true);
     expect(world.society.villages[0].food).toBe(8); expect([...world.query('caravan')][0].components.caravan!.food).toBe(5);
-    world.society.villages[0].food = 60; expect(dispatchCaravan(world, 1, 2)).toBe(false);
+    setFood(world.society.villages[0], 60); expect(dispatchCaravan(world, 1, 2)).toBe(false);
     world.remove([...world.query('caravan')][0].id); declareWar(world, 1, 2);
     expect(dispatchCaravan(world, 1, 2)).toBe(false);
   });
@@ -74,7 +74,8 @@ describe('caravans', () => {
     const wagon = [...world.query('caravan')][0];
     expect(wagon.components.position!.x).toBeLessThan(24); expect(world.society.villages[1].food).toBe(0);
     expect(wagon.components.caravan!.food).toBe(12);
-    world.terrain.set(24, 26, Terrain.Road); advance(world, 6);
+    world.terrain.set(24, 26, Terrain.Road);
+    for (let i = 0; i < 300 && !wagon.components.caravan!.returning; i++) world.step();
     expect(world.society.villages[1].food).toBe(12); expect(wagon.components.caravan!.returning).toBe(true);
   });
   it.each(['before', 'after'])('goes around an obstacle built %s departure and returns by the travelled path', when => {

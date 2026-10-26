@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
     const registry = createRegistry();
     const controller = new InputController(renderer, {
       tool: () => registry.tools.get(fixture.tool), select: (id: string) => { fixture.tool = id; }, tools: () => registry.tools.values(),
-      dispatch: (command: GameCommand) => fixture.commands.push(command), togglePause: () => {},
+      dispatch: (command: GameCommand) => fixture.commands.push(command), togglePause: () => {}, stepSpeed: () => {},
       dimensions: () => ({ x: 48, y: 48 }), blocked: () => fixture.blocked, cameraChanged: () => {},
     });
     const update = (now: number): void => { controller.update(now); requestAnimationFrame(update); };
@@ -145,7 +145,7 @@ test('Hammer of Dawn stops when left is released while the right button remains 
 test('changing speed and pausing preserve a held Hammer of Dawn until mouse release', async ({ page }) => {
   await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:hammer-of-dawn'; });
   await page.mouse.move(350, 250); await page.mouse.down();
-  await page.keyboard.press('3'); await page.keyboard.press('Space'); await page.keyboard.press('Space');
+  await page.keyboard.press('+'); await page.keyboard.press('Space'); await page.keyboard.press('Space');
   expect((await state(page)).commands.filter(command => command.kind === 'release-tool')).toHaveLength(0);
   await page.mouse.up();
   expect((await state(page)).commands.at(-1)).toMatchObject({ kind: 'release-tool' });

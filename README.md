@@ -1,6 +1,6 @@
 # 🌍 Pocket Overlord
 
-![Pocket Overlord — a pixel globe above the game title](public/og-image.png)
+![Pocket Overlord — pixel island and updated game interface](images/banner/03-world-in-hands-small.jpg)
 
 > **A living pixel world in your hands.**
 >
@@ -75,9 +75,9 @@ The world overview shows the current season, year and food reserves. Pioneers wa
 
 ## ⏱️ World and time
 
-- **World shapes:** Choose **Dragon**, **Turtle** or a random shape when creating a new world.
+- **World shapes:** Choose **Turtle**, **Phoenix**, **Kraken**, **Whale**, **Yin and Yang** or a random shape when creating a new world.
 - **Pause and resume:** Inspect the island or place tools while time is stopped. Timers, travel and explosions continue when you resume.
-- **Speed selection:** Choose **⅕×, 1×, 2×, 4×, 10× or 40×** from the speed menu. The speed reached depends on the activity in the world and your device.
+- **Speed selection:** Choose **⅕×, 1×, 2×, 4×, 10× or 20×** from the speed menu. The speed reached depends on the activity in the world and your device.
 - **Camera:** Zoom in to watch individual villagers, or pull back to follow the whole island.
 - **New world:** Open **Settings → New world**, choose a shape and confirm. This replaces your current world.
 

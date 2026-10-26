@@ -1,9 +1,10 @@
+import { BIOME_ECOLOGY, type BiomeEcology } from '../content/biome-profiles';
 import { noise } from './random';
 
 // Living ground is independent of island shapes, roads and blast damage.
 // Append new IDs so existing worlds keep their original biomes.
-export enum NaturalBiome { Grassland, Savanna, Desert, Jungle, Swamp, Permafrost, Enchanted, Corrupted, Infernal, Mushroom, Crystal, Candy, Lemon }
-export const NATURAL_BIOMES = [
+export enum NaturalBiome { Grassland, Savanna, Desert, Jungle, Swamp, Permafrost, Enchanted, Corrupted, Infernal, Mushroom, Crystal, Candy, Lemon, Paradox }
+const BIOME_VISUALS = [
   { id: NaturalBiome.Grassland, key: 'grassland', name: 'Grassland', label: 'Grassland seeds', hint: 'Plant meadows and broadleaf trees. Balanced soil for farming.', colors: ['#7b9d50', '#7d9f52', '#78994d', '#809f54'], detail: '#a0b66b', trees: 0.22, growth: 1, walking: 1 },
   { id: NaturalBiome.Savanna, key: 'savanna', name: 'Savanna', label: 'Savanna seeds', hint: 'Plant golden grass and acacias. Crops grow more slowly.', colors: ['#b4ac59', '#b8af5c', '#b1a654', '#bdb461'], detail: '#d8c878', trees: 0.12, growth: 0.75, walking: 1 },
   { id: NaturalBiome.Desert, key: 'desert', name: 'Desert', label: 'Desert seeds', hint: 'Spread desert sand and cacti. Poor soil and slower travel.', colors: ['#d9b976', '#dcbc7a', '#d5b471', '#e0c180'], detail: '#b8965f', trees: 0.055, growth: 0.35, walking: 0.8 },
@@ -17,10 +18,14 @@ export const NATURAL_BIOMES = [
   { id: NaturalBiome.Crystal, key: 'crystal', name: 'Crystal', label: 'Crystal seeds', hint: 'Grow blue crystal spires on violet ground. Rocky soil slows crops and travel.', colors: ['#777aab', '#7d80b1', '#7275a5', '#8386b7'], detail: '#b6d6ec', trees: 0.18, growth: 0.65, walking: 0.85 },
   { id: NaturalBiome.Candy, key: 'candy', name: 'Candy', label: 'Candy seeds', hint: 'Plant candy trees on pink sugar fields. Crops thrive, but sticky ground slows travel.', colors: ['#c78ea6', '#cd94ac', '#c188a0', '#d39ab2'], detail: '#f5c8d7', trees: 0.23, growth: 1.1, walking: 0.9 },
   { id: NaturalBiome.Lemon, key: 'lemon', name: 'Lemon', label: 'Lemon seeds', hint: 'Grow golden lemon groves. Sunny soil helps crops grow faster.', colors: ['#bbb965', '#c1bf6b', '#b5b35f', '#c7c571'], detail: '#e9df95', trees: 0.27, growth: 1.15, walking: 1 },
+  // Tile identity and entry action only; ecology and the seed tool belong to the biome plan.
+  { id: NaturalBiome.Paradox, key: 'paradox', name: 'Paradox', label: 'Paradox', hint: 'Entering this ground can add one year of biological age.', colors: ['#927d62', '#978369', '#8a765e'], detail: '#bca68a', trees: 0, growth: 1, walking: 1 },
 ] as const;
 
-export const FANTASY_BIOMES = NATURAL_BIOMES.filter(biome => biome.id >= NaturalBiome.Enchanted);
-export const SEED_BIOMES = NATURAL_BIOMES.filter(biome => biome.id !== NaturalBiome.Crystal && biome.id !== NaturalBiome.Candy);
+export const NATURAL_BIOMES = BIOME_VISUALS.map(biome => ({ ...biome, ecology: BIOME_ECOLOGY[biome.key] as BiomeEcology }));
+
+export const FANTASY_BIOMES = NATURAL_BIOMES.filter(biome => biome.id >= NaturalBiome.Enchanted && biome.id !== NaturalBiome.Paradox);
+export const SEED_BIOMES = NATURAL_BIOMES.filter(biome => biome.id !== NaturalBiome.Crystal && biome.id !== NaturalBiome.Candy && biome.id !== NaturalBiome.Paradox);
 
 export const biomeDefinition = (id: number) => NATURAL_BIOMES[id] ?? NATURAL_BIOMES[NaturalBiome.Grassland];
 
@@ -103,7 +108,7 @@ export function biomeSurface(biome: number, surface: number): BiomeSurface | und
   return BIOME_SURFACES[biome]?.[surface - 1];
 }
 
-function smoothNoise(x: number, y: number, seed: number): number {
+export function smoothNoise(x: number, y: number, seed: number): number {
   const ix = Math.floor(x), iy = Math.floor(y);
   const smooth = (t: number): number => t * t * (3 - 2 * t);
   const tx = smooth(x - ix), ty = smooth(y - iy);
@@ -112,25 +117,24 @@ function smoothNoise(x: number, y: number, seed: number): number {
   return a * (1 - ty) + b * ty;
 }
 
+/** Shared, seed-stable planting sites: dense groves, open glades and isolated trees. */
+export function naturalTreeSite(x: number, y: number, seed: number, biome: NaturalBiome): { x: number; y: number } | undefined {
+  const cover = smoothNoise(x / 22, y / 22, seed + 941) * 0.72
+    + smoothNoise(x / 8, y / 8, seed + 977) * 0.28;
+  const grove = Math.max(0, Math.min(1, (cover - 0.36) / 0.3));
+  const density = biomeDefinition(biome).trees * 0.25 * (0.035 + grove * grove * 3.5);
+  if (noise(x, y, seed + 1013) >= density) return;
+  return { x: x + 0.12 + noise(x, y, seed + 1031) * 0.76, y: y + 0.12 + noise(x, y, seed + 1063) * 0.76 };
+}
+
 /** Broad patches with irregular edges, in the island's 0–100 coordinates. */
 export function surfacePatchNoise(x: number, y: number, seed: number): number {
   return smoothNoise(x / 18, y / 18, seed + 211) * 0.8 + smoothNoise(x / 7, y / 7, seed + 307) * 0.2;
 }
 
-/** Broad climate regions with irregular edges, in the island's 0–100 coordinates. */
-export function naturalBiomeFor(x: number, y: number, seed: number): NaturalBiome {
-  // Magic forms broad patches among the climate regions, rather than individual tiles.
-  if (smoothNoise(x / 16, y / 16, seed + 659) > 0.67) {
-    const region = Math.floor((x + 8) / 26) + Math.floor((y + 8) / 26) * 3 + Math.floor(noise(0, 0, seed + 167) * FANTASY_BIOMES.length);
-    return FANTASY_BIOMES[(region % FANTASY_BIOMES.length + FANTASY_BIOMES.length) % FANTASY_BIOMES.length].id;
-  }
-  const heat = y / 100 + (smoothNoise(x / 17, y / 17, seed + 83) - 0.5) * 0.32;
-  const wetX = noise(0, 0, seed + 37) > 0.5 ? x : 100 - x;
-  const moisture = wetX / 100 + (smoothNoise(x / 21, y / 21, seed + 127) - 0.5) * 0.4;
-  if (heat < 0.28) return NaturalBiome.Permafrost;
-  if (moisture > 0.73) return NaturalBiome.Swamp;
-  if (heat < 0.53) return NaturalBiome.Grassland;
-  if (moisture < 0.3) return NaturalBiome.Desert;
-  if (moisture < 0.52) return NaturalBiome.Savanna;
-  return NaturalBiome.Jungle;
+/** Choose one climate for the entire world, independent of its shape and size. */
+export function naturalBiomeForSeed(seed: number): NaturalBiome {
+  let draw = noise(0, 0, seed + 167) * NATURAL_BIOMES.reduce((sum, b) => sum + b.ecology.generationWeight, 0);
+  for (const biome of NATURAL_BIOMES) { draw -= biome.ecology.generationWeight; if (draw < 0) return biome.id; }
+  return NaturalBiome.Grassland;
 }

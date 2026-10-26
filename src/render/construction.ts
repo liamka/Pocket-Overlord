@@ -1,3 +1,4 @@
+import type { Sprite } from '../content/registry';
 import type { Entity } from '../core/types';
 import { raceOf } from '../core/races';
 import { drawSprite } from './sprites';
@@ -19,8 +20,8 @@ export function drawStoneHouse(ctx: CanvasRenderingContext2D, entity: Entity, ti
   ctx.fillStyle = '#d4d8c9'; ctx.fillRect(-10, 3, 21, 2);
 }
 
-export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, tick: number, color?: string): void {
-  const site = entity.components.dwelling!.construction!, progress = site.progress;
+export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, tick: number, color?: string, sprite: Sprite = 'house'): void {
+  const site = entity.components.building!.project!, progress = site.progress;
   const rect = (color: string, x: number, y: number, w: number, h: number): void => {
     ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
   };
@@ -28,8 +29,8 @@ export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, 
     const length = Math.ceil(Math.hypot(toX - x, toY - y));
     for (let i = 0; i <= length; i++) rect('#b68c51', x + (toX - x) * i / length, y + (toY - y) * i / length, 2, 2);
   };
-  if (site.upgrade) {
-    drawSprite(ctx, 'house', entity.components.appearance?.variant, tick / 30, false, 0, color, raceOf(entity));
+  if (site.action === 'upgrade') {
+    drawSprite(ctx, sprite, entity.components.appearance?.variant, tick / 30, false, 0, color, raceOf(entity));
     ctx.save(); ctx.beginPath(); ctx.rect(-14, 5 - progress * 18, 28, progress * 18); ctx.clip();
     drawStoneHouse(ctx, entity, tick / 30, color); ctx.restore();
     for (const x of [-14, 13]) { rect('#735637', x, -17, 2, 23); rect('#bc9b63', x, -17, 1, 22); }
@@ -56,7 +57,7 @@ export function drawConstruction(ctx: CanvasRenderingContext2D, entity: Entity, 
   if (progress >= 3 / 12) {
     const top = 5 - (progress - 0.25) / 0.75 * 38;
     ctx.save(); ctx.beginPath(); ctx.rect(-13, top, 27, 10 - top); ctx.clip();
-    drawSprite(ctx, 'house', entity.components.appearance?.variant, tick / 30, false, 0, color, raceOf(entity));
+    drawSprite(ctx, sprite, entity.components.appearance?.variant, tick / 30, false, 0, color, raceOf(entity));
     ctx.restore();
   }
   const piles = Math.max(1, 4 - Math.floor(progress * 4));

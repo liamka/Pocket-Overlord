@@ -56,7 +56,7 @@ test('fragments preserve all four architectures, village colors and the actual c
       intact.push(expected.join(',') === Array.from(ctx.getImageData(88, 70, 23, 27).data).join(',')); starts.add(canvas.toDataURL());
       effect.update(1.8); clear(); effect.ground(ctx); effect.drawBefore(ctx); rubble.add(canvas.toDataURL());
     }
-    const house = world.spawn('core:house', { x: 0, y: 0 }); house.components.dwelling.construction = { progress: 0, struckAt: -1 };
+    const house = world.spawn('core:house', { x: 0, y: 0 }); house.components.building.project = { action: 'build', paid: false, cost: {}, progress: 0, struckAt: -1 };
     const site = new HouseCollapseAnimations(); site.start({ kind: 'collapse', x: 0, y: 0, radius: 5, house, tick: 0 }, false);
     clear(); site.ground(ctx); site.drawBefore(ctx);
     const sky = ctx.getImageData(75, 65, 50, 25).data;

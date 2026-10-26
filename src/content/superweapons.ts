@@ -45,12 +45,12 @@ const tsarIcon: PixelSprite = {
 
 function sear(world: World, point: Vec2): void {
   const { x, y } = point;
-  world.events.push({ kind: 'surface', x, y, radius: HAMMER.groundRadius, terrain: Terrain.Scorched },
-    { kind: 'surface', x, y, radius: 1.5, terrain: Terrain.Crater });
-  for (const entity of world.nearby(point, HAMMER.radius)) {
+  world.events.push({ kind: 'surface', origin: 'heat-ray', x, y, radius: HAMMER.groundRadius, terrain: Terrain.Scorched },
+    { kind: 'surface', origin: 'heat-ray', x, y, radius: 1.5, terrain: Terrain.Crater });
+  for (const entity of world.nearby(point, HAMMER.radius).sort((a, b) => a.id - b.id)) {
     if (entity.components.projectile) continue;
-    if (entity.components.thermal) world.events.push({ kind: 'heat', target: entity.id, amount: 80 });
-    if (entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 108 });
+    if (entity.components.thermal) world.events.push({ kind: 'heat', target: entity.id, amount: 80, player: true });
+    if (entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 108, cause: 'divine', player: true });
   }
 }
 
@@ -75,19 +75,19 @@ function detonate(world: World, point: Vec2): void {
   launchSeaWave(world, point, TSAR.radius);
   world.events.push({ kind: 'surface', x, y, radius: TSAR.radius, terrain: Terrain.Scorched },
     { kind: 'surface', x, y, radius: TSAR.craterRadius, terrain: Terrain.Crater });
-  for (const entity of world.nearby(point, TSAR.damageRadius)) {
+  for (const entity of world.nearby(point, TSAR.damageRadius).sort((a, b) => a.id - b.id)) {
     if (entity.components.projectile) continue;
     const position = entity.components.position!, dx = position.x - point.x, dy = position.y - point.y;
     const distance = Math.hypot(dx, dy), force = 28 * Math.max(0, 1 - distance / TSAR.damageRadius) / (distance || 1);
-    if (entity.components.thermal) world.events.push({ kind: 'heat', target: entity.id, amount: 500 });
-    if (entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 3500 });
+    if (entity.components.thermal) world.events.push({ kind: 'heat', target: entity.id, amount: 500, player: true });
+    if (entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 3500, cause: 'explosion', player: true });
     if (entity.components.motion) world.events.push({ kind: 'impulse', target: entity.id, x: dx * force, y: dy * force });
   }
 }
 
 function fallout(world: World, point: Vec2): void {
-  for (const entity of world.nearby(point, TSAR.falloutRadius)) {
-    if (!entity.components.projectile && entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 15 });
+  for (const entity of world.nearby(point, TSAR.falloutRadius).sort((a, b) => a.id - b.id)) {
+    if (!entity.components.projectile && entity.components.health) world.events.push({ kind: 'damage', target: entity.id, amount: 15, cause: 'other', player: true });
   }
 }
 

@@ -11,7 +11,7 @@ export function registerAfflictions(registry: Registry): void {
   registry.registerSystem({ id: 'core:afflictions', after: ['core:fire'], before: ['core:landscape'], update: afflictions });
   registry.registerTool({ id: PLAGUE.id, label: 'Plague', category: 'destruction', icon: plagueIcon, radius: PLAGUE.brush, paint: true, color: '#a6b957',
     hint: 'Click or drag to infect residents. The plague spreads through close contact and slowly kills.',
-    apply: (world, p) => { for (const entity of world.nearby(p, PLAGUE.brush)) infect(entity); },
+    apply: (world, p) => { for (const entity of world.nearby(p, PLAGUE.brush)) infect(entity, world); },
   });
   registry.registerTool({ id: MADNESS.id, label: 'Madness', category: 'destruction', icon: madnessIcon, radius: MADNESS.brush, paint: true, color: '#d9674c',
     hint: 'Click or drag to drive residents mad. They abandon their tasks and attack anyone nearby.',

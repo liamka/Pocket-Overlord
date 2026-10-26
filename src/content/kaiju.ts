@@ -123,16 +123,16 @@ export function kaijuBeam(position: Vec2, state: KaijuState): { from: KaijuJoint
 
 function crush(world: World, entity: Entity): void {
   const p = entity.components.position!, state = entity.components.kaiju!;
-  for (const victim of world.nearby(p, KAIJU.crush)) {
+  for (const victim of world.nearby(p, KAIJU.crush).sort((a, b) => a.id - b.id)) {
     if (!prey(victim)) continue;
-    world.events.push({ kind: 'damage', target: victim.id, amount: 450 });
+    world.events.push({ kind: 'damage', target: victim.id, amount: 450, cause: 'conflict', sourceId: entity.id });
     const q = victim.components.position!, length = Math.hypot(q.x - p.x, q.y - p.y) || 1;
     if (victim.components.motion) world.events.push({ kind: 'impulse', target: victim.id, x: (q.x - p.x) / length * 12, y: (q.y - p.y) / length * 12 });
   }
-  world.events.push({ kind: 'surface', ...p, radius: 3.4, terrain: Terrain.Crater });
+  world.events.push({ kind: 'surface', ...p, radius: 3.4, terrain: Terrain.Crater, origin: 'stomp' });
   for (const joint of kaijuPose(p, state).feet) {
     const foot = clampPoint(world, joint);
-    world.events.push({ kind: 'surface', ...foot, radius: 1.3, terrain: Terrain.Crater });
+    world.events.push({ kind: 'surface', ...foot, radius: 1.3, terrain: Terrain.Crater, origin: 'stomp' });
   }
 }
 
@@ -141,9 +141,9 @@ function fireBeam(world: World, entity: Entity): void {
   if (!world.terrain.inside(point.x, point.y)) return;
   world.events.push({ kind: 'surface', ...point, radius: 3.6, terrain: Terrain.Scorched },
     { kind: 'surface', ...point, radius: 2.4, terrain: Terrain.Crater });
-  for (const victim of world.nearby(point, 3.6)) {
+  for (const victim of world.nearby(point, 3.6).sort((a, b) => a.id - b.id)) {
     if (!prey(victim)) continue;
-    world.events.push({ kind: 'heat', target: victim.id, amount: 160 }, { kind: 'damage', target: victim.id, amount: 1200 });
+    world.events.push({ kind: 'heat', target: victim.id, amount: 160, sourceId: entity.id }, { kind: 'damage', target: victim.id, amount: 1200, cause: 'fire', sourceId: entity.id });
   }
   world.visual({ kind: 'blast', ...point, radius: 2.6 });
 }
@@ -229,7 +229,7 @@ export function registerKaiju(registry: Registry): void {
       aimX: p.x, aimY: Math.max(0, p.y - 20), thinkIn: 0, phase: 'idle', phaseTime: 0, pulseIn: 0 },
   }) });
   registry.registerSystem({ id: 'core:kaiju', after: ['core:movement'], before: ['core:settlement'], update: rampage });
-  registry.registerTool({ id: KAIJU_ID, category: 'destruction', icon, label: 'Giant Kaiju', radius: KAIJU.crush, showArea: false, color: '#81dcff',
+  registry.registerTool({ creaturePlacement: (world, point) => latest(world) ? undefined : ({ typeId: KAIJU_ID, point }), id: KAIJU_ID, category: 'destruction', icon, label: 'Giant Kaiju', radius: KAIJU.crush, showArea: false, color: '#81dcff',
     hint: 'Click to summon a reptilian titan. WASD or arrows: move. Aim with the mouse; hold left click for atomic breath. Select another power to let it rampage. Right-drag: pan.',
     apply: (world, point) => {
       const existing = latest(world);

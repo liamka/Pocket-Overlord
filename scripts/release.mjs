@@ -6,12 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { prepareRevision, readChangelog } from './changesets.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const itchTarget = 'liamka/pocket-overlord:html5';
 process.chdir(root);
 
-function run(command, args, { capture = false, cwd = root } = {}) {
+function run(command, args, { capture = false, cwd = root, env = process.env } = {}) {
   if (!capture) console.log(`> ${command} ${args.join(' ')}`);
   const result = spawnSync(command, args, {
-    cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    cwd, env, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   });
   if (result.error) throw new Error(`${command}: ${result.error.message}`);
   if (result.status !== 0) {
@@ -75,11 +76,45 @@ function packageBuild(currentVersion, notes) {
   return { archive, checksum, notesFile };
 }
 
+function checkItch() {
+  try {
+    run('butler', ['status', itchTarget], { capture: true });
+  } catch (error) {
+    throw new Error(`itch.io is not ready. Install butler and run butler login, then retry. ${error.message}`);
+  }
+}
+
+function uploadItch(archive, currentVersion) {
+  run('butler', ['push', archive, itchTarget, '--userversion', currentVersion, '--if-changed']);
+  console.log(`Uploaded ${currentVersion} to https://liamka.itch.io/pocket-overlord (visibility unchanged).`);
+}
+
+function retryItch(currentVersion) {
+  const name = `PocketOverlord-${currentVersion}-web.zip`;
+  const directory = resolve('releases', `v${currentVersion}`);
+  const archive = join(directory, name);
+  const checksum = join(directory, 'SHA256SUMS');
+  if (!existsSync(archive) || !existsSync(checksum)) {
+    throw new Error(`No packaged release ${currentVersion}. Run make release first.`);
+  }
+  const expected = `${createHash('sha256').update(readFileSync(archive)).digest('hex')}  ${name}`;
+  if (readFileSync(checksum, 'utf8').trim() !== expected) {
+    throw new Error('Release archive checksum mismatch. Restore the original release archive before retrying.');
+  }
+  const html = run('unzip', ['-p', archive, 'index.html'], { capture: true });
+  if (/\b(?:src|href)=["']\/(?!\/)/.test(html)) {
+    throw new Error('This archive uses absolute asset paths. Create a new release with relative paths for itch.io.');
+  }
+  checkItch();
+  uploadItch(archive, currentVersion);
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--package')) {
-    throw new Error('Usage: node scripts/release.mjs [--package]');
+  if (args.length > 1 || (args.length === 1 && !['--package', '--itch-only'].includes(args[0]))) {
+    throw new Error('Usage: node scripts/release.mjs [--package | --itch-only]');
   }
+  if (args[0] === '--itch-only') return retryItch(version());
   const publish = args.length === 0;
   run('zip', ['-v'], { capture: true });
   let branch, repo, initialHead, releases;
@@ -91,6 +126,7 @@ async function main() {
     repo = githubRepository();
     run('gh', ['auth', 'status', '--hostname', 'github.com'], { capture: true });
     releases = run('gh', ['api', `repos/${repo}/releases`, '--paginate', '--jq', '.[] | [.tag_name, .draft] | @tsv'], { capture: true });
+    checkItch();
   }
 
   const previousVersion = version();
@@ -109,7 +145,7 @@ async function main() {
     }, 0n);
     const release = releases.split('\n').find(line => line.split('\t')[0] === tag);
     if (release && release.split('\t')[1] !== 'true') {
-      throw new Error(`${tag} is already published. Add a new changeset for the next release.`);
+      throw new Error(`${tag} is already published. To retry its itch.io upload, run make release-itch. Add a new changeset for the next release.`);
     }
     draft = Boolean(release);
     const remoteTag = git('ls-remote', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`)
@@ -132,7 +168,7 @@ async function main() {
     revision?.apply();
     const notes = releaseNotes(currentVersion, since);
     if (!publish) run('npm', ['test']);
-    run('npm', ['run', 'build']);
+    run('npm', ['run', 'build'], { env: { ...process.env, PAGES_BASE_PATH: './' } });
     if (version() !== currentVersion) throw new Error('The project version changed during the build. Run the command again.');
     artifacts = packageBuild(currentVersion, notes);
     if (!publish) return;
@@ -175,6 +211,11 @@ async function main() {
       '--title', `Pocket Overlord ${tag}`, '--notes-file', notesFile, '--latest']);
   }
   console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);
+  try {
+    uploadItch(archive, currentVersion);
+  } catch (error) {
+    throw new Error(`GitHub release ${tag} is published, but the itch.io upload failed. Run make release-itch to retry the same archive. ${error.message}`);
+  }
 }
 
 try {

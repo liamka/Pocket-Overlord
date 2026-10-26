@@ -1,4 +1,54 @@
-import { legacyBridges } from '../core/roads';
+import { migrateFood, validFoodSave } from './food';
+import { validSupplySave } from './supply';
+import { migrateClouds } from './clouds';
+import { migratePhysiology, validPhysiologySave } from './physiology';
+import { migrateBiomeEcology } from './biome-ecology';
+import { migrateTemperature } from './temperature';
+import { validTileLayers } from './tiles';
+import { migrateCurrency, validCurrencySave } from './currency';
+import { newWorldRules } from '../core/world-rules';
+import { validTerritories } from './territory';
+import { validWorldRules } from './world-rules';
+import { newWorldProcesses } from '../core/world-processes';
+import { validWorldProcesses } from './world-processes';
+import { migrateReproduction, validReproductionSave } from './reproduction';
+import { migrateLeather } from './leather';
+import { migrateGenetics } from './genetics';
+import { migratePhenotypes, normalizeUnknownPhenotypes } from './phenotypes';
+import { migrateSubspecies, validSubspeciesSave } from './subspecies';
+import { validTraitsSave } from './traits';
+import { isAdult } from '../core/unit-stats';
+import { migrateLifespans, migrateStats, validStatsSave } from './unit-stats';
+import { migrateStatuses, validStatusesSave } from './status-effects';
+import { migrateLevels } from './unit-levels';
+import { migrateHappiness, validHappinessSave } from './happiness';
+import { migrateEquipment, validEquipmentSave } from './equipment';
+import { migrateUnits, validUnitsSave } from './units';
+import { migrateFamilies, validFamiliesSave } from './families';
+import { newDeaths } from '../core/death';
+import { validDeathsSave } from './death';
+import { validTransformationsSave } from './metamorphosis';
+import { canGovern, validateSpeciesComponents } from '../core/capabilities';
+import { migrateCrafting, validCraftingSave } from './crafting';
+import { migrateCommonMetals } from './common-metals';
+import { migrateSilver } from './silver';
+import { migrateGold } from './gold';
+import { migrateCreatures } from './creatures';
+import { validBehaviourSave } from './behaviour';
+import { validNeuronSave } from './neurons';
+import { validJobsSave } from '../core/jobs';
+import { validMinesSave } from '../core/mines';
+import { ARCHITECTURES, BUILDINGS, buildingCost, hasCapability, newBuilding, type Building } from '../core/buildings';
+import { storageOwner, type Storage } from '../core/stockpiles';
+import { newTree } from '../core/forestry';
+import { GEMS } from '../core/gems';
+import { newDeposit, type Deposit } from '../core/deposits';
+import { STONE, STONE_WEAPONS } from '../core/stone';
+import { SILVER_WEIGHTS } from '../core/silver';
+import { SOURCE_PROFILES } from '../core/resources';
+import { addBundle, bundleLoad, canConsume, entries, LEGACY_GOODS, RESIDENT_DIET, validFoodGoods, type ResourceBundle } from '../core/resources';
+import { isCrafted, RECIPES } from '../core/resource-ledger';
+import { ROAD_PROBLEMS, legacyBridges } from '../core/roads';
 import type { Registry } from '../content/registry';
 import { validVillageLife } from '../content/village-life';
 import { Random } from '../core/random';
@@ -7,11 +57,11 @@ import { LEGACY_ROCKET_HEADING } from '../core/flight';
 import { isRace, RACES, RACE_IDS } from '../core/races';
 import { bool, integer, number, record, type RecordValue } from '../core/validation';
 import { isDamagedTerrain, recoveryDuration } from '../core/terrain';
-import { NaturalBiome, NATURAL_BIOMES, BIOME_SURFACES } from '../core/natural-biomes';
+import { NaturalBiome, NATURAL_BIOMES } from '../core/natural-biomes';
 import { alliedGroup, allianceGroups, normalizeLegacyAlliances, opposingSides } from '../core/diplomacy';
-import { ENTITY_LIMIT, FERRY_CAPACITY, MAX_BRIDGE_SPAN, MAX_FERRY_SPAN, POPULATION_LIMIT, ROAD_OVERGROWTH_SECONDS, SAVE_VERSION, Terrain, WORLD_WIDTH, WORLD_HEIGHT, isSimulationSpeed, newCitizen, newSociety, type ComponentKey, type Road, type Society, type War, type WorldSnapshot } from '../core/types';
+import { ENTITY_LIMIT, FERRY_CAPACITY, MAX_BRIDGE_SPAN, MAX_FERRY_SPAN, POPULATION_LIMIT, isBridge, ROAD_OVERGROWTH_SECONDS, SAVE_VERSION, Terrain, WORLD_WIDTH, WORLD_HEIGHT, isSimulationSpeed, newCitizen, newSociety, type ComponentKey, type Road, type Society, type War, type WorldSnapshot } from '../core/types';
 
-const migrations = new Map<number, (save: RecordValue) => RecordValue>([
+const migrations = new Map<number, (save: RecordValue, registry: Registry) => RecordValue>([
   [1, save => {
     if (!record(save.terrain) || !integer(save.terrain.width, 16, 256) || !integer(save.terrain.height, 16, 192)) throw new Error('Повреждена карта сохранённого мира');
     return { ...save, version: 2, terrain: { ...save.terrain, moisture: new Array(save.terrain.width * save.terrain.height).fill(0) } };
@@ -172,6 +222,174 @@ const migrations = new Map<number, (save: RecordValue) => RecordValue>([
     }
     return { ...save, version: 32 };
   }],
+  // Preserve existing goods and aggregate food. No resources are seeded from map objects.
+  [32, save => {
+    if (record(save.society) && Array.isArray(save.society.villages)) for (const v of save.society.villages) {
+      if (record(v) && number(v.food, 0, 2000) && record(v.economy) && record(v.economy.stocks) && number(v.economy.stocks.bread, 0, 2000)) {
+        // Legacy food was authoritative. Match the old economy's clamp when a previous
+        // meal/transport left a stale bread subset; never refund that already-used food.
+        v.economy.stocks.bread = Math.min(v.food, v.economy.stocks.bread);
+      }
+    }
+    return { ...save, version: 33 };
+  }],
+  [33, save => {
+    if (!record(save.society) || !Array.isArray(save.society.villages) || !Array.isArray(save.entities) || !integer(save.nextEntityId, 1)) throw new Error('Invalid legacy storage');
+    const entities = save.entities;
+    for (const village of save.society.villages) {
+      if (!record(village) || !validVillageLife(village) || !number(village.food, 0, 2000)) throw new Error('Invalid legacy goods');
+      const economy = record(village.economy) ? village.economy : { stocks: Object.fromEntries(LEGACY_GOODS.map(id => [id, 0])), deliveries: 0, buildAfter: Number(village.founded) + 900 };
+      village.economy = economy;
+      if (economy.storage !== undefined) continue;
+      const stocks = economy.stocks as ResourceBundle;
+      const goods = { ...stocks, provisions: Number(village.food) - entries(stocks).reduce((sum, [id, n]) => sum + (canConsume(id, RESIDENT_DIET) ? n : 0), 0) };
+      const owned = entities.filter(e => record(e) && record(e.components) && [e.components.workplace, e.components.dwelling].some(c => record(c) && c.villageId === village.id));
+      let anchor = owned.find(e => record(e.components.workplace) && e.components.workplace.kind === 'market') ?? owned.find(e => record(e.components.dwelling));
+      if (!anchor) {
+        anchor = { id: Number(save.nextEntityId), typeId: 'core:stockpile', components: { position: { x: village.x, y: village.y },
+          health: { current: 180, max: 180 }, solid: { radius: 1.1 }, combustible: { fuel: 45, ignition: 38 }, thermal: { temperature: 0, wetness: 0, burning: false },
+          stockpile: { villageId: village.id, resistance: 'ordinary' } } };
+        save.nextEntityId = Number(save.nextEntityId) + 1; entities.push(anchor);
+      }
+      const store: Storage = { buildingId: Number(anchor.id), capacity: Math.max(256, bundleLoad(goods).volume), limits: {}, goods, reservations: [] };
+      for (const e of entities) {
+        if (!record(e) || !record(e.components) || !record(e.components.citizen)) continue;
+        const c = e.components.citizen, work = c.work;
+        if (c.villageId !== village.id || !entities.some(t => record(t) && t.id === c.targetId)) continue;
+        if (c.task === 'work' && record(work) && record(work.reservation) && work.reservation.villageId === village.id)
+          store.reservations.push({ claimant: Number(e.id), goods: { ...work.reservation.inputs as ResourceBundle } });
+        if (c.task === 'equip' && !c.weapon) store.reservations.push({ claimant: Number(e.id), goods: { stoneAxes: 1 } });
+      }
+      economy.storage = [store];
+    }
+    return { ...save, version: 34 };
+  }],
+
+  [34, save => {
+    if (!Array.isArray(save.entities)) throw new Error('Invalid legacy buildings');
+    for (const e of save.entities) {
+      if (!record(e) || !record(e.components) || typeof e.typeId !== 'string') continue;
+      const c = e.components, kind = e.typeId === 'core:ruin' ? 'core:house' : e.typeId;
+      if (!Object.hasOwn(BUILDINGS, kind)) continue;
+      if (!c.building) {
+        const race = record(c.dwelling) ? c.dwelling.race : record(c.ruin) ? c.ruin.race : 'human';
+        const b = newBuilding(kind, isRace(race) ? race : 'human'); c.building = b;
+        if (record(c.dwelling) && c.dwelling.level === 2) b.level = 2;
+        if (record(c.ruin)) b.state = 'ruined';
+        const old = record(c.dwelling) && record(c.dwelling.construction) ? c.dwelling.construction : undefined;
+        if (old || record(c.harbor) && Number(c.harbor.built) < 1) {
+          const action = old?.upgrade ? 'upgrade' : 'build';
+          b.project = { action, progress: Number(old?.progress ?? (c.harbor as RecordValue).built), struckAt: Number(old?.struckAt ?? -1),
+            paid: true, cost: buildingCost(e as unknown as import('../core/types').Entity, action) };
+          b.state = 'construction';
+        }
+      }
+      if (record(c.dwelling)) delete c.dwelling.construction;
+    }
+    return { ...save, version: 35 };
+  }],
+
+  [35, migrateEquipment],
+  [36, migrateCrafting],
+  [37, save => {
+    if (!Array.isArray(save.entities) || !record(save.terrain) || !Array.isArray(save.terrain.biomes) || !integer(save.terrain.width, 16)) throw new Error('Invalid legacy forest');
+    for (const entity of save.entities) {
+      if (!record(entity) || !record(entity.components)) continue;
+      const c = entity.components, p = c.position;
+      if (entity.typeId === 'core:tree' && c.tree === undefined && record(p) && number(p.x) && number(p.y)) {
+        const biome = save.terrain.biomes[Math.floor(p.y) * save.terrain.width + Math.floor(p.x)];
+        c.tree = newTree(integer(biome, 0, NATURAL_BIOMES.length - 1) ? biome : NaturalBiome.Grassland, record(c.appearance) ? Number(c.appearance.variant ?? 0) : 0, 'legacy');
+      }
+      // Existing paid work stays paid. Do not charge a completed hut retroactively.
+      if (entity.typeId === 'core:house' && record(c.building) && record(c.building.project) && c.building.project.action === 'build') {
+        c.building.project.cost = { ...BUILDINGS['core:house'].cost };
+        if (!c.building.project.paid) c.building.state = 'planned';
+      }
+    }
+    return { ...save, version: 38 };
+  }],
+  [38, save => {
+    if (!Array.isArray(save.entities) || !record(save.terrain) || !Array.isArray(save.terrain.biomes) || !integer(save.terrain.width, 16)) throw new Error('Invalid legacy deposits');
+    for (const entity of save.entities) {
+      if (!record(entity) || !record(entity.components)) continue;
+      const c = entity.components, p = c.position;
+      if (record(c.stone) && c.stone.profile === undefined && record(p) && number(p.x) && number(p.y)) {
+        const biome = save.terrain.biomes[Math.floor(p.y) * save.terrain.width + Math.floor(p.x)];
+        c.stone = { ...newDeposit(integer(biome, 0, NATURAL_BIOMES.length - 1) ? biome : NaturalBiome.Grassland, 'legacy'), remaining: c.stone.remaining };
+      }
+    }
+    // Unfinished stone work releases its old, unspent reservation before repricing.
+    const release = new Set<number>();
+    if (record(save.crafting) && Array.isArray(save.crafting.orders)) for (const order of save.crafting.orders) {
+      if (!record(order) || !Object.hasOwn(STONE_WEAPONS, String(order.recipe)) || order.recipe === 'stone-axe') continue;
+      order.inputs = { ...STONE_WEAPONS[order.recipe as keyof typeof STONE_WEAPONS].inputs };
+      if (order.paid || !['waiting', 'working'].includes(String(order.state))) continue;
+      const worker = save.entities.find(e => record(e) && e.id === order.workerId);
+      if (record(worker) && record(worker.components) && record(worker.components.citizen)) {
+        const c = worker.components.citizen;
+        if (record(c.work) && c.work.orderId === order.id) {
+          release.add(Number(worker.id)); delete c.work;
+          if (c.task === 'work') { c.task = 'idle'; c.targetId = null; c.path = []; }
+        }
+      }
+      Object.assign(order, { workerId: null, workplaceId: null, progress: 0, state: 'waiting', reason: 'materials' });
+    }
+    if (record(save.society) && Array.isArray(save.society.villages)) for (const v of save.society.villages) {
+      if (!record(v) || !record(v.economy) || !Array.isArray(v.economy.storage)) continue;
+      for (const store of v.economy.storage) if (record(store) && Array.isArray(store.reservations))
+        store.reservations = store.reservations.filter(r => !record(r) || !release.has(Number(r.claimant)));
+    }
+    return { ...save, version: 39 };
+  }],
+  [39, migrateCommonMetals],
+  [40, save => {
+    // Preserve old stock and sources. Only active rare-material reservations gain a deadline.
+    if (record(save.crafting) && Array.isArray(save.crafting.orders)) for (const o of save.crafting.orders) {
+      if (record(o) && record(o.inputs) && o.inputs.gems && o.state === 'working') o.reservedUntil = Number(save.tick) + GEMS.reservationTicks;
+    }
+    return { ...save, version: 41 };
+  }],
+  [41, migrateSilver],
+  // Existing bones and original death times survive. Optional consumer/raised
+  // policies stay absent; no deposits, traits or resources are granted on load.
+  [42, save => ({ ...save, version: 43 })],
+  [43, migrateUnits],
+  [44, migrateCreatures],
+  // Existing owners retain their work, cargo and timers. Stages are adopted lazily, without RNG.
+  [45, save => ({ ...save, version: 46 })],
+  // Optional lifecycle context is adopted without rerunning actions or drawing randomness.
+  [46, save => ({ ...save, version: 47 })],
+  [48, migrateFamilies],
+  // No cause can be reconstructed reliably from old animations or nearby units.
+  [47, save => ({ ...save, deaths: newDeaths(), version: 48 })],
+  // Optional form history and personal bonds. Existing units gain no rebirth grant.
+  [49, save => ({ ...save, version: 50 })],
+  [50, migrateHappiness],
+  [51, migrateStats],
+  [52, migrateLevels],
+  [53, migrateStatuses],
+  [54, migrateSubspecies],
+  [55, migrateReproduction],
+  [56, migrateGenetics],
+  [57, migratePhenotypes],
+  [58, migrateLeather],
+  [59, save => ({ ...save, version: 60, speed: save.speed === 40 ? 20 : save.speed })],
+  [60, (save, registry) => ({ ...save, version: 61, processes: newWorldProcesses(Number(save.seed), Number(save.tick), registry) })],
+  [61, save => ({ ...save, version: 62, worldRules: newWorldRules() })],
+  [62, save => {
+    if (!record(save.terrain)) throw new Error('Invalid saved terrain');
+    return { ...save, version: 63, terrain: { ...save.terrain, layers: [], visualSeed: Number(save.seed) >>> 0 } };
+  }],
+  [63, migrateCurrency],
+  [64, migrateGold],
+  [65, migrateBiomeEcology],
+  [66, migrateTemperature],
+  [67, migratePhysiology],
+  // Legacy transport retains its existing cargo and receipts; no retroactive supply or income.
+  [68, save => ({ ...save, version: 69 })],
+  [69, migrateClouds],
+  [70, migrateFood],
+  [71, migrateLifespans],
 ]);
 
 export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
@@ -181,8 +399,9 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
   while (save.version !== SAVE_VERSION) {
     const migrate = migrations.get(Number(save.version));
     if (!migrate) throw new Error('Версия сохранения больше не поддерживается');
-    save = migrate(save);
+    save = migrate(save, registry);
   }
+  normalizeUnknownPhenotypes(save);
   const fail = (): never => { throw new Error('Сохранённый мир повреждён или содержит неподдерживаемые данные'); };
   if (!Array.isArray(save.contentPacks) || save.contentPacks.length > 1024 || new Set(save.contentPacks).size !== save.contentPacks.length) return fail();
   const installedPacks = new Set(registry.packIds);
@@ -191,15 +410,18 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (!installedPacks.has(id)) throw new Error(`Для сохранения нужен пакет контента: ${id}`);
   }
   if (!integer(save.seed, 0, 0xffffffff) || !integer(save.rngState, 0, 0xffffffff) || !integer(save.tick) || !integer(save.nextEntityId, 1) || !bool(save.paused)) fail();
-  if (!isSimulationSpeed(save.speed)) fail();
+  if (!isSimulationSpeed(save.speed) || !validWorldRules(save.worldRules, Number(save.tick))) fail();
   const terrain = save.terrain;
   if (!record(terrain) || !integer(terrain.width, 16, WORLD_WIDTH) || !integer(terrain.height, 16, WORLD_HEIGHT)) return fail();
   const width = terrain.width as number, height = terrain.height as number;
-  if (!Array.isArray(terrain.tiles) || terrain.tiles.length !== width * height || !terrain.tiles.every(t => integer(t, 0, Terrain.BridgeVertical))) fail();
+  if (!validWorldProcesses(save.processes, registry, Number(save.tick), width * height, Number(save.nextEntityId))) return fail();
+  if (!Array.isArray(terrain.tiles) || terrain.tiles.length !== width * height || !terrain.tiles.every(t => integer(t, 0, Terrain.Summit))) fail();
   if (!Array.isArray(terrain.moisture) || terrain.moisture.length !== width * height || !terrain.moisture.every(m => number(m, 0, 3.1))) fail();
   if (!Array.isArray(terrain.biomes) || terrain.biomes.length !== width * height || !Array.from(terrain.biomes).every(b => integer(b, 0, NATURAL_BIOMES.length - 1))) fail();
-  const biomes = terrain.biomes as number[];
-  if (!Array.isArray(terrain.surfaces) || terrain.surfaces.length !== width * height || !Array.from(terrain.surfaces).every((surface, i) => integer(surface, 0, BIOME_SURFACES[biomes[i]].length))) fail();
+  if (!Array.isArray(terrain.surfaces) || terrain.surfaces.length !== width * height || !Array.from(terrain.surfaces).every(surface => integer(surface, 0, 3))) fail();
+  if (!validTileLayers(terrain as unknown as WorldSnapshot['terrain'])) fail();
+  for (const layer of (terrain as unknown as WorldSnapshot['terrain']).layers ?? [])
+    if ((layer.thermalAt ?? 0) > Number(save.tick) || (layer.thermalChange?.tick ?? 0) > Number(save.tick)) fail();
   if (!Array.isArray(terrain.recovery) || terrain.recovery.length > width * height) return fail();
   const recovering = new Set<number>();
   const tiles = terrain.tiles as number[];
@@ -214,8 +436,12 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
   const worn = new Set<number>();
   for (const state of terrain.roadWear) {
     if (!record(state) || !integer(state.index, 0, tiles.length - 1) || worn.has(state.index)
-      || !integer(state.age, 0, ROAD_OVERGROWTH_SECONDS) || (state.target !== Terrain.Sand && state.target !== Terrain.Grass)
-      || (state.age === ROAD_OVERGROWTH_SECONDS ? tiles[state.index] !== state.target : tiles[state.index] !== Terrain.Road)) return fail();
+      || !integer(state.age, 0, ROAD_OVERGROWTH_SECONDS) || !integer(state.target, Terrain.DeepWater, Terrain.Grass)
+      || state.waterDepth !== undefined && (Number(state.target) >= Terrain.Sand || !integer(state.waterDepth, 1, 3))) return fail();
+    const base = tiles[state.index], water = Number(state.target) < Terrain.Sand;
+    if (state.age === ROAD_OVERGROWTH_SECONDS ? base !== state.target && (water || !isDamagedTerrain(base))
+      : water ? !isBridge(base) && base !== state.target
+      : base !== Terrain.Road && !isDamagedTerrain(base) && base !== state.target) return fail();
     worn.add(state.index);
   }
   if (!Array.isArray(save.entities) || save.entities.length > ENTITY_LIMIT) return fail();
@@ -228,6 +454,8 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       || typeof village.name !== 'string' || village.name.length > 80 || !number(village.x, 0, width) || !number(village.y, 0, height)
       || !number(village.food, 0, 2000) || !integer(village.harvested) || !integer(village.founded, 0, Number(save.tick)) || !integer(village.migrationAfter) || !validVillageLife(village)
       || record(village.government) && Number(village.government.electedAt) > Number(save.tick)) return fail();
+    if (village.roadPlan !== undefined && (!record(village.roadPlan) || !integer(village.roadPlan.after)
+      || !integer(village.roadPlan.cursor, 0, ENTITY_LIMIT) || !ROAD_PROBLEMS.includes(village.roadPlan.problem as typeof ROAD_PROBLEMS[number]))) return fail();
     villages.add(village.id);
   }
   const pairs = new Set<string>();
@@ -269,7 +497,12 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
   if (!Array.isArray(society.roads) || society.roads.length > 300) return fail();
   const roads = new Set<string>();
   for (const road of society.roads) {
-    if (!record(road) || !pairs.has(`${road.a}:${road.b}`) || roads.has(`${road.a}:${road.b}`) || !Array.isArray(road.tiles)
+    if (!record(road)) return fail();
+    const local = road.buildings !== undefined;
+    if (local && (!integer(road.a, 1) || road.a !== road.b || !villages.has(Number(road.a)) || !Array.isArray(road.buildings) || road.buildings.length !== 2
+      || !road.buildings.every(id => integer(id, 1, Number(save.nextEntityId) - 1)) || road.buildings[0] === road.buildings[1])) return fail();
+    const roadKey = local ? `${road.a}:buildings:${[...(road.buildings as number[])].sort((a, b) => a - b).join(':')}` : `${road.a}:${road.b}`;
+    if (!local && !pairs.has(roadKey) || roads.has(roadKey) || !Array.isArray(road.tiles)
       || !road.tiles.length || road.tiles.length > width * height || !road.tiles.every(i => integer(i, 0, width * height - 1)) || !integer(road.built, 0, road.tiles.length)) return fail();
     for (let i = 1; i < road.tiles.length; i++) {
       const a = Number(road.tiles[i - 1]), b = Number(road.tiles[i]);
@@ -302,10 +535,13 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
         }
       }
     }
-    roads.add(`${road.a}:${road.b}`);
+    roads.add(roadKey);
   }
   if (!Array.isArray(society.history) || society.history.length > 40 || !society.history.every(e => record(e) && integer(e.tick, 0, Number(save.tick)) && typeof e.text === 'string' && e.text.length <= 300)) fail();
+  if (!validPhysiologySave(save as unknown as WorldSnapshot)) return fail();
+  if (!validSubspeciesSave(save as unknown as WorldSnapshot, registry)) return fail();
   const ids = new Set<number>();
+  const lootOrigins = new Set<number>();
   const homes = new Map<number, number>();
   const inhabitants = new Map<number, number>();
   let population = 0;
@@ -313,6 +549,11 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
   for (const entity of save.entities) {
     if (!record(entity) || !integer(entity.id, 1) || ids.has(entity.id) || entity.id >= Number(save.nextEntityId) || !record(entity.components) || typeof entity.typeId !== 'string') return fail();
     const definition = registry.entities.get(entity.typeId);
+    if (record(entity.components.thermal)) {
+      const thermal = entity.components.thermal;
+      if (record(thermal.lastChange) && Number(thermal.lastChange.tick) > Number(save.tick)
+        || entity.components.unit && Number(thermal.temperature) > 300) fail();
+    }
     if (!definition) throw new Error(`В сохранении есть неизвестный тип: ${entity.typeId}`);
     let required = requiredByType.get(definition.id);
     if (!required) {
@@ -320,7 +561,15 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       requiredByType.set(definition.id, required);
     }
     const components = entity.components;
+    if (definition.speciesId ? !record(components.creature) || components.creature.speciesId !== definition.speciesId : components.creature !== undefined) fail();
+    if (record(components.creature) && (components.creature.since !== null && Number(components.creature.since) > Number(save.tick)
+      || record(components.creature.result) && (Number(components.creature.result.at) > Number(save.tick)
+        || components.creature.since !== null && Number(components.creature.result.at) < Number(components.creature.since)))) fail();
     if (required.some(key => !(key in components))) fail();
+    if (definition.speciesId) {
+      try { validateSpeciesComponents(registry.species.get(definition.speciesId)!, definition, components as import('../core/types').Components); }
+      catch { fail(); }
+    }
     const nativeRace = RACE_IDS.find(race => RACES[race].entityId === entity.typeId);
     if (nativeRace && (!record(components.person) || (components.person.race ?? 'human') !== nativeRace)) fail();
     for (const [key, component] of Object.entries(entity.components)) {
@@ -328,10 +577,53 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       if (!validate || !record(component) || !validate(component)) fail();
     }
     const p = entity.components.position;
+    if (entity.typeId === 'core:gold-ore' && (!record(components.stone) || components.stone.profile !== 'goldOre')) fail();
+    if (record(components.stone) && components.stone.profile === 'goldOre'
+      && (entity.typeId !== 'core:gold-ore' || components.commonMetal !== undefined
+        || !['placed', 'mine', 'biology'].includes(String(components.stone.origin)))) fail();
+    if (record(components.stone) && components.stone.origin === 'biology' && components.stone.profile !== 'goldOre') fail();
+    if (record(components.ship) && record(components.ship.goldVoyage)) {
+      const voyage = components.ship.goldVoyage;
+      if (Number(voyage.departed) > Number(save.tick) || Number(voyage.fromId) >= society.nextVillageId
+        || Number(voyage.toId) >= society.nextVillageId
+        || !voyage.settled && (components.ship.cargoOwnerId !== voyage.fromId || Number(components.ship.cargo) <= 0 && !record(components.shipment))) fail();
+    }
+    if (record(components.temple) && (entity.typeId !== 'core:temple' || !record(components.building)
+      || components.building.level !== 1 || components.dwelling !== undefined || components.workplace !== undefined
+      || components.stockpile !== undefined || components.harbor !== undefined || components.farm !== undefined
+      || components.ruin !== undefined || record(components.thermal) && components.thermal.burning)) fail();
+    if (entity.typeId === 'core:silver-ore' && (!record(components.stone) || components.stone.profile !== 'silverOre')) fail();
+    if (record(components.stone) && components.stone.profile === 'silverOre'
+      && (entity.typeId !== 'core:silver-ore' || components.commonMetal !== undefined
+        || !['natural', 'placed', 'mine', 'legacy'].includes(String(components.stone.origin))
+        || components.stone.origin === 'natural' && !SILVER_WEIGHTS[components.stone.biome as NaturalBiome])) fail();
+    if (entity.typeId === 'core:bone-deposit' && (!record(components.stone) || components.stone.profile !== 'boneDeposit')) fail();
+    if (record(components.stone) && components.stone.profile === 'boneDeposit'
+      && (entity.typeId !== 'core:bone-deposit' || components.stone.biome !== NaturalBiome.Corrupted || !['natural', 'mine'].includes(String(components.stone.origin)))) fail();
+    if (record(components.resourceConsumer) && !record(components.person)) fail();
+    if (record(components.gemSource) && (Number(components.gemSource.createdAt) > Number(save.tick)
+      || entity.typeId !== (components.gemSource.kind === 'ore' ? 'core:gem-ore' : 'core:crystal-plant'))) fail();
+    if (entity.typeId === 'core:tree' && !record(components.tree)) fail();
     if (record(p) && (Number(p.x) >= width || Number(p.y) >= height)) fail();
     if (record(entity.components.dwelling)) homes.set(entity.id, Number(entity.components.dwelling.capacity));
-    if (record(entity.components.dwelling) && record(entity.components.dwelling.construction)
-      && Number(entity.components.dwelling.construction.struckAt) > Number(save.tick)) fail();
+    if (record(components.building)) {
+      const b = components.building as unknown as Building, project = b.project;
+      if (['core:temple', 'core:mine'].includes(b.kind) && (b.level !== 1 || project?.legacyGoldCost)) fail();
+      if (b.level > ARCHITECTURES[b.architecture].levels || (entity.typeId !== 'core:ruin' && b.kind !== entity.typeId)
+        || entity.typeId === 'core:ruin' && b.state !== 'ruined' && project?.action !== 'clear') fail();
+      if (project) {
+        const cost = buildingCost(entity as unknown as import('../core/types').Entity, project.action);
+        if (project.legacyGoldCost) {
+          if (!cost.gold || project.cost.gold !== undefined) fail();
+          delete cost.gold;
+        }
+        if (project.struckAt > Number(save.tick) || project.progress > 0 && !project.paid
+          || project.paid && b.state !== 'construction' || !project.paid && !['planned', 'reserved'].includes(b.state)
+          || project.action === 'clear' && entity.typeId !== 'core:ruin'
+          || project.action === 'upgrade' && (!record(components.dwelling) || b.level !== 1)
+          || entries(cost).some(([id, n]) => project.cost[id] !== n) || entries(project.cost).some(([id, n]) => cost[id] !== n)) fail();
+      } else if (['planned', 'reserved', 'construction'].includes(b.state)) fail();
+    }
     if (record(entity.components.person)) {
       population++;
       const displaced = entity.components.person.displaced;
@@ -339,14 +631,27 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       const homeId = entity.components.person.homeId;
       if (homeId !== null) inhabitants.set(Number(homeId), (inhabitants.get(Number(homeId)) ?? 0) + 1);
     }
-    for (const key of ['citizen', 'dwelling', 'farm', 'animal', 'workplace']) {
+    for (const key of ['citizen', 'dwelling', 'farm', 'animal', 'workplace', 'stockpile', 'temple', 'mine']) {
       const component = components[key];
       if (record(component) && component.villageId !== null && !villages.has(Number(component.villageId))) fail();
-      if (record(component) && component.villageId !== null && (key === 'citizen' || key === 'dwelling')) {
-        const race = key === 'dwelling' ? component.race : record(components.person) ? components.person.race : undefined;
+      if (record(component) && component.villageId !== null && key === 'citizen') {
+        const race = record(components.person) ? components.person.race : undefined;
         const village = typedSociety.villages.find(v => v.id === component.villageId);
         if ((race ?? 'human') !== (village?.race ?? 'human')) fail();
       }
+    }
+    const pile = components.resourcePile;
+    if (record(pile)) {
+      if (!record(components.thermal) || !record(components.combustible)) fail();
+      if (Number(pile.createdAt) > Number(save.tick) || Number(pile.originId) >= Number(save.nextEntityId) || lootOrigins.has(Number(pile.originId))
+        || save.entities.some(e => e.id === pile.originId)) fail();
+      lootOrigins.add(Number(pile.originId));
+    }
+    const raised = components.raisedRemains;
+    if (record(raised)) {
+      if ((!record(components.person) && !record(components.animal)) || record(pile) || Number(raised.originId) >= Number(save.nextEntityId)
+        || lootOrigins.has(Number(raised.originId)) || save.entities.some(e => e.id === raised.originId)) fail();
+      lootOrigins.add(Number(raised.originId));
     }
     const citizen = components.citizen;
     if (record(citizen)) {
@@ -376,9 +681,88 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (seats > FERRY_CAPACITY) fail();
   }
   const byId = new Map(save.entities.map(e => [e.id as number, e.components as RecordValue]));
+  for (const c of byId.values()) {
+    if (record(c.creature) && record(c.creature.result) && c.creature.result.targetId !== null && !byId.has(Number(c.creature.result.targetId))) fail();
+  }
+  const storedBuildings = new Set<number>();
+  const miners = new Set<number>();
+  for (const entity of save.entities) {
+    const deposit = (entity.components.stone ?? entity.components.commonMetal) as Deposit | undefined;
+    if (!deposit) continue;
+    for (const claim of deposit.claims) {
+      const worker = byId.get(claim.workerId)?.citizen;
+      if (miners.has(claim.workerId) || claim.expires <= Number(save.tick) || claim.expires > Number(save.tick) + STONE.claimTicks
+        || !villages.has(claim.villageId) || !record(worker) || worker.villageId !== claim.villageId || worker.task !== 'work'
+        || worker.targetId !== entity.id || !record(worker.work) || worker.work.good !== SOURCE_PROFILES[deposit.profile].primary
+        || worker.work.cargo !== null || worker.work.orderId !== undefined) fail();
+      miners.add(claim.workerId);
+    }
+  }
+  for (const entity of save.entities) {
+    const tree = entity.components.tree;
+    if (!record(tree) || tree.claim === null) continue;
+    const claim = tree.claim as RecordValue, worker = byId.get(Number(claim.workerId))?.citizen;
+    if (!villages.has(Number(claim.villageId)) || !record(worker) || worker.villageId !== claim.villageId || worker.task !== 'work'
+      || worker.targetId !== entity.id || !record(worker.work) || worker.work.good !== 'wood' || worker.work.cargo !== null || worker.work.orderId !== undefined) fail();
+  }
   for (const village of typedSociety.villages) {
+    const storage = village.economy?.storage;
+    if (!storage) return fail();
+    const total: ResourceBundle = {}, claims = new Map<number, ResourceBundle>();
+    for (const store of storage) {
+      const building = save.entities.find(e => e.id === store.buildingId);
+      if (!building || record(building.components.ruin) || !hasCapability(building as unknown as import('../core/types').Entity, 'storage')
+        || storedBuildings.has(store.buildingId) || storageOwner(building as unknown as import('../core/types').Entity) !== village.id) return fail();
+      storedBuildings.add(store.buildingId); addBundle(total, store.goods);
+      const reserved: ResourceBundle = {}, claimants = new Set<number>();
+      for (const r of store.reservations) {
+        if (!ids.has(r.claimant) || claimants.has(r.claimant)) return fail();
+        claimants.add(r.claimant); addBundle(reserved, r.goods);
+        const sum = claims.get(r.claimant) ?? {}; addBundle(sum, r.goods); claims.set(r.claimant, sum);
+      }
+      if (entries(reserved).some(([id, n]) => n > (store.goods[id] ?? 0) + 1e-8)) return fail();
+    }
+    if (entries(total).some(([id, n]) => n > 2000 + 1e-8 || id !== 'provisions' && Math.abs(n - (village.economy!.stocks[id] ?? 0)) > 1e-8)
+      || entries(village.economy!.stocks).some(([id, n]) => Math.abs(n - (total[id] ?? 0)) > 1e-8)
+      || Math.abs(entries(total).reduce((sum, [id, n]) => sum + (canConsume(id, RESIDENT_DIET) ? n : 0), 0) - village.food) > 1e-8) return fail();
+    for (const [claimant, goods] of claims) {
+      const holder = byId.get(claimant), c = holder?.citizen, b = holder?.building;
+      const project = record(b) && record(b.project) ? b.project : undefined;
+      let expected: ResourceBundle | undefined;
+      if (project && !project.paid) {
+        const entity = save.entities.find(e => e.id === claimant)!;
+        if (storageOwner(entity as unknown as import('../core/types').Entity) !== village.id || (b as RecordValue).state !== 'reserved') return fail();
+        expected = project.cost as ResourceBundle;
+      } else {
+        if (!record(c) || c.villageId !== village.id) return fail();
+        const work = c.work, target = byId.get(Number(c.targetId));
+        expected = c.task === 'work' && record(work) && record(work.reservation) && work.cargo === null
+          && record(target?.workplace) && isCrafted(String(work.good)) && target.workplace.kind === RECIPES[work.good as keyof typeof RECIPES].station && target.workplace.villageId === village.id ? work.reservation.inputs as ResourceBundle : undefined;
+      }
+      if (!expected || entries(expected).some(([id, n]) => Math.abs(n - (goods[id] ?? 0)) > 1e-8)
+        || entries(goods).some(([id, n]) => Math.abs(n - (expected[id] ?? 0)) > 1e-8)) return fail();
+    }
+  }
+  const reservations = new Map<number, ResourceBundle>();
+  for (const components of byId.values()) {
+    const c = components.citizen;
+    if (!record(c) || c.task !== 'work' || !record(c.work) || !record(c.work.reservation)) continue;
+    const r = c.work.reservation, station = byId.get(Number(c.targetId))?.workplace;
+    // A changed task, settlement or destroyed station releases its claim immediately,
+    // even if the worker has not yet reconsidered its old route.
+    if (r.villageId !== c.villageId || !isCrafted(String(c.work.good)) || !record(station)
+      || station.villageId !== r.villageId || station.kind !== RECIPES[c.work.good as keyof typeof RECIPES].station) continue;
+    const total = reservations.get(Number(r.villageId)) ?? {};
+    addBundle(total, r.inputs as ResourceBundle); reservations.set(Number(r.villageId), total);
+  }
+  for (const village of typedSociety.villages) {
+    if (entries(reservations.get(village.id) ?? {}).some(([id, n]) => n > (village.economy?.stocks[id] ?? 0) + 1e-8)) fail();
     const leader = village.government?.leaderId;
     if (leader != null && !record(byId.get(leader)?.person)) fail();
+    if (leader != null) {
+      const entity = (save.entities as WorldSnapshot['entities']).find(e => e.id === leader)!;
+      if (entity.components.citizen?.villageId !== village.id || !canGovern(registry, entity)) village.government!.leaderId = null;
+    }
   }
   for (const entity of save.entities) {
     const animal = entity.components.animal;
@@ -397,7 +781,7 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
       || !record(group.destination) || !number(group.destination.x, 0, width - 0.001) || !number(group.destination.y, 0, height - 0.001)
       || !Array.isArray(group.members) || group.members.length < 1 || group.members.length > 10
       || !Array.isArray(group.homeIds) || group.homeIds.length > 1 || group.toId === null && group.homeIds.length !== 0
-      || !number(group.food, 0, 30) || !integer(group.started, 0, Number(save.tick))) return fail();
+      || !number(group.food, 0, 30) || !validFoodGoods(group.foodGoods, Number(group.food)) || !integer(group.started, 0, Number(save.tick))) return fail();
     migrationIds.add(group.id);
     for (const id of group.members) {
       if (!integer(id, 1) || travelers.has(id)) return fail();
@@ -431,14 +815,14 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
         && (state[key] === entity.id || !record(byId.get(Number(state[key]))?.person))) fail();
     }
     if (c.task === 'build') {
-      const site = byId.get(Number(c.targetId))?.dwelling;
-      if (!record(person) || Number(person.age) < 18 || !record(site) || !record(site.construction)
-        || (site.race ?? 'human') !== (person.race ?? 'human')) fail();
+      const site = byId.get(Number(c.targetId));
+      if (!record(person) || !isAdult(entity as unknown as WorldSnapshot['entities'][number]) || !record(site?.building) || !record(site.building.project)
+        || record(site.dwelling) && (site.dwelling.race ?? 'human') !== (person.race ?? 'human')) fail();
     }
     if (c.targetId !== null && !ids.has(Number(c.targetId))) fail();
     if (record(c.emergency) && c.emergency.targetId !== null) {
       const target = byId.get(Number(c.emergency.targetId));
-      if (!target || c.emergency.targetId === entity.id || !record(person) || Number(person.age) < 18
+      if (!target || c.emergency.targetId === entity.id || !record(person) || !isAdult(entity as unknown as WorldSnapshot['entities'][number])
         || c.emergency.kind === 'aid' && (!record(target.person) || !record(target.health))
         || c.emergency.kind === 'extinguish' && !record(target.thermal)) fail();
     }
@@ -464,5 +848,24 @@ export function decodeSave(raw: unknown, registry: Registry): WorldSnapshot {
     if (!definition.validate(scenario.state)) fail();
     scenarios.add(scenario.id);
   }
+  if (!validSupplySave(save as unknown as WorldSnapshot)) fail();
+  if (!validEquipmentSave(save as unknown as WorldSnapshot)) fail();
+  if (!validCurrencySave(save as unknown as WorldSnapshot)) fail();
+  if (!validStatsSave(save as unknown as WorldSnapshot)) fail();
+  if (!validTraitsSave(save as unknown as WorldSnapshot)) fail();
+  if (!validReproductionSave(save as unknown as WorldSnapshot, registry)) return fail();
+  if (!validStatusesSave(save as unknown as WorldSnapshot)) fail();
+  if (!validCraftingSave(save as unknown as WorldSnapshot)) fail();
+  if (!validUnitsSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validFoodSave(save as unknown as WorldSnapshot)) fail();
+  if (!validHappinessSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validFamiliesSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validDeathsSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validTransformationsSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validBehaviourSave(save as unknown as WorldSnapshot, registry)) fail();
+  if (!validNeuronSave(save as unknown as WorldSnapshot)) fail();
+  if (!validJobsSave(save as unknown as WorldSnapshot)) fail();
+  if (!validMinesSave(save as unknown as WorldSnapshot)) fail();
+  if (!validTerritories(save as unknown as WorldSnapshot)) fail();
   return save as unknown as WorldSnapshot;
 }

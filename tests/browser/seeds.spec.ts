@@ -92,7 +92,7 @@ test('rejects invalid input and accepts both seed boundaries without changing th
 });
 
 test('randomizing changes the seed and preview, keeps settings and cancels without replacing the world', async ({ page }) => {
-  await page.goto('/?changelog=1');
+  await page.goto('/?debug=1');
   await expect(page.locator('#loading-screen')).toBeHidden();
   const original = (await savedWorld(page))!;
   for (const cancel of ['button', 'escape']) {

@@ -49,12 +49,25 @@ test.describe('undo', () => {
     await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
     await expect(page.locator('#save-status')).toBeHidden();
     const before = (await readSave(page))!;
+    await page.evaluate(async () => {
+      const url = performance.getEntriesByType('resource').map(entry => entry.name).find(url => /\/src\/core\/terrain\.ts(?:\?|$)/.test(url))!;
+      const { TerrainMap } = await import(url), snapshot = TerrainMap.prototype.snapshot;
+      const metrics = { copies: 0 };
+      (window as unknown as { undoTerrainMetrics: typeof metrics }).undoTerrainMetrics = metrics;
+      TerrainMap.prototype.snapshot = function (...args: unknown[]) {
+        const result = snapshot.apply(this, args);
+        if (result !== args[0]) metrics.copies++;
+        return result;
+      };
+    });
     const undo = page.locator('#undo');
     for (let i = 0; i < 32; i++) {
       const target = point(14 + i % 8 * 3, 14 + Math.floor(i / 8) * 3);
       await page.mouse.click(target.x, target.y);
     }
     await expect(page.locator('#population')).toHaveText('32');
+    // Unchanged terrain must not be copied twice per click. Allow periodic autosaves.
+    expect(await page.evaluate(() => (window as unknown as { undoTerrainMetrics: { copies: number } }).undoTerrainMetrics.copies)).toBeLessThanOrEqual(3);
     for (let remaining = 31; remaining >= 27; remaining--) {
       await undo.click();
       await expect(page.locator('#population')).toHaveText(String(remaining));
@@ -102,9 +115,9 @@ test.describe('undo', () => {
     await page.locator('[data-category="destruction"]').click();
     await page.locator('[data-tool="core:dynamite"]').click();
     const target = point(24, 24); await page.mouse.click(target.x, target.y);
-    await page.keyboard.press('4');
+    await chooseSpeed(page, 4);
     await expect.poll(async () => (await readSave(page))?.terrain.tiles.includes(Terrain.Crater)).toBe(true);
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     await page.locator('#undo').click();
     await expect.poll(() => readSave(page)).toEqual({ ...before, paused: true, speed: 4 });
     await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
@@ -240,17 +253,17 @@ test('a new couple gets one brief heart that pauses with the world and then expi
   }
   await seed(page, { ...world.snapshot(), paused: true });
   for (const p of positions) expect((await badgeColors(page, p)).heart).toBe(0);
-  await page.keyboard.press('2');
+  await chooseSpeed(page, 1);
   await expect(page.locator('#families')).toHaveText('1');
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   const colors = await badgeColors(page, positions[0]); expect(colors.heart).toBeGreaterThan(20); expect(colors.white).toBeGreaterThan(100);
   expect((await badgeColors(page, positions[1])).heart).toBe(0);
   await page.waitForTimeout(1200);
   expect((await badgeColors(page, positions[0])).heart).toBeGreaterThan(20);
   expect((await badgeColors(page, positions[1])).heart).toBe(0);
-  await page.keyboard.press('4');
+  await chooseSpeed(page, 4);
   await expect.poll(async () => (await badgeColors(page, positions[0])).heart).toBe(0);
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   for (const p of positions) expect((await badgeColors(page, p)).white).toBe(0);
 });
 
@@ -289,8 +302,8 @@ test('several couples in a crowd show no more heart pixels than one couple', asy
       e.components.citizen!.villageId = 1; e.components.motion!.speed = 0;
     }
     await seed(page, { ...world.snapshot(), paused: true });
-    await page.keyboard.press('2'); await expect(page.locator('#families')).toHaveText(String(count / 2));
-    await page.keyboard.press('1');
+    await chooseSpeed(page, 1); await expect(page.locator('#families')).toHaveText(String(count / 2));
+    await page.locator('#time-toggle').click();
     counts.push(await page.evaluate(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('#world')!, pixels = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
       let hearts = 0;
@@ -394,24 +407,24 @@ test('dynamite breaks a road and residents repair it after walking there, includ
   await expect(page.locator('#relations')).toContainText('Дорог 1');
   await page.locator('[data-category="destruction"]').click(); await page.getByRole('button', { name: 'Динамит', exact: true }).click();
   await page.mouse.click(...Object.values(point(middle % 48 + 0.5, Math.floor(middle / 48) + 0.5)) as [number, number]);
-  await page.keyboard.press('4');
+  await chooseSpeed(page, 4);
   await expect(page.locator('#relations')).toContainText('Дорог 0');
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   await expect.poll(async () => (await readSave(page))?.terrain.tiles[middle], { timeout: 7000 }).toBe(Terrain.Crater);
   const broken = (await readSave(page))!;
   expect(road.tiles.filter(i => broken.terrain.tiles[i] !== Terrain.Road).length).toBeGreaterThan(4);
-  await page.keyboard.press('2');
+  await chooseSpeed(page, 1);
   await expect.poll(async () => (await readSave(page))?.entities.some(e => e.components.citizen?.repair), { timeout: 15000 }).toBe(true);
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   await expect.poll(async () => (await readSave(page))?.paused, { timeout: 7000 }).toBe(true);
   const working = (await readSave(page))!;
   expect(working.entities.some(e => e.components.citizen?.repair)).toBe(true);
   await page.reload();
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   expect(await readSave(page)).toEqual(working);
-  await page.keyboard.press('4');
+  await chooseSpeed(page, 4);
   await expect(page.locator('#relations')).toContainText('Дорог 1', { timeout: 20000 });
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   await expect.poll(async () => {
     const saved = await readSave(page);
     return saved?.paused && road.tiles.every(i => saved.terrain.tiles[i] === Terrain.Road);
@@ -421,10 +434,140 @@ test('dynamite breaks a road and residents repair it after walking there, includ
   expect(errors).toEqual([]);
 });
 
+test('background saves round-trip terrain deltas and recover after a worker restart', async ({ page }) => {
+  await page.route('**/save-probe', route => route.fulfill({ contentType: 'text/html', body: '<div></div>' }));
+  await page.goto('/save-probe');
+  const result = await page.evaluate(async () => {
+    const helpersPath = '/tests/helpers.ts', storagePath = '/src/persistence/storage.ts';
+    const { flatWorld } = await import(helpersPath), { IndexedDBBackend, SaveService } = await import(storagePath);
+    const world = flatWorld(), backend = new IndexedDBBackend(`delta-test-${crypto.randomUUID()}`, true);
+    const saves = new SaveService(backend, world.registry), transfers: number[] = [];
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, transfer) {
+      const buffers = Array.isArray(transfer) ? transfer : transfer?.transfer ?? [];
+      if (message.snapshot?.terrain) transfers.push(buffers.reduce<number>((n, b) => n + (b instanceof ArrayBuffer ? b.byteLength : 0), 0));
+      return post.call(this, message, { transfer: buffers });
+    };
+    try {
+      await saves.load(); await saves.saveWorld(world);
+      await saves.saveWorld(world);
+      world.terrain.moisture[100] = 0.123456789; world.tick++;
+      await saves.saveWorld(world);
+      const delta = await backend.read();
+      const expected = world.snapshot();
+      backend.worker.onerror(new Event('error'));
+      await saves.saveWorld(world);
+      const restarted = await backend.read();
+      return { transfers, exact: JSON.stringify(delta) === JSON.stringify(expected), restarted: JSON.stringify(restarted) === JSON.stringify(expected) };
+    } finally { Worker.prototype.postMessage = post; backend.worker?.terminate(); }
+  });
+  expect(result.exact).toBe(true); expect(result.restarted).toBe(true);
+  expect(result.transfers[0]).toBeGreaterThan(0); expect(result.transfers[1]).toBe(0);
+  expect(result.transfers[2]).toBe(1024 * 8); expect(result.transfers[3]).toBe(result.transfers[0]);
+});
+
+test('leaves unchanged UI alone and refreshes settlement details when opened', async ({ page }) => {
+  await page.route('**/ui-probe', route => route.fulfill({ contentType: 'text/html', body: '<div id="app"></div>' }));
+  await page.goto('/ui-probe');
+  const result = await page.evaluate(async () => {
+    const helpersPath = '/tests/helpers.ts', uiPath = '/src/ui.ts';
+    const { villageWorld } = await import(helpersPath), { UI } = await import(uiPath);
+    const world = villageWorld(), ui = new UI(world.registry, () => {}, true);
+    document.querySelector<HTMLDetailsElement>('#society-panel')!.open = false;
+    ui.update(world, 2); ui.updateFPS(60);
+    ui.unitInspector.select([...world.query('person')][0].id); ui.update(world, 2);
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.querySelector('#app')!, { subtree: true, childList: true, attributes: true, characterData: true });
+    for (let i = 0; i < 10; i++) { ui.update(world, 2); ui.updateFPS(60); }
+    const mutations = observer.takeRecords().length; observer.disconnect();
+    const list = document.querySelector('#village-list')!;
+    const closed = list.childElementCount;
+    const panel = document.querySelector<HTMLDetailsElement>('#society-panel')!;
+    panel.open = true; panel.dispatchEvent(new Event('toggle'));
+    return { mutations, closed, opened: list.childElementCount, villages: world.society.villages.length };
+  });
+  expect(result.mutations).toBe(0); expect(result.closed).toBe(0); expect(result.opened).toBe(result.villages);
+});
+
+test('culls before sorting while retaining the pixels and depth order at viewport edges', async ({ page }) => {
+  await page.route('**/culling-probe', route => route.fulfill({ contentType: 'text/html', body: '<canvas style="width:800px;height:600px"></canvas>' }));
+  await page.goto('/culling-probe');
+  const results = await page.evaluate(async () => {
+    const helpersPath = '/tests/helpers.ts', rendererPath = '/src/render/renderer.ts';
+    const { flatWorld } = await import(helpersPath), { Renderer } = await import(rendererPath);
+    const world = flatWorld(), renderer = new Renderer(document.querySelector('canvas')!);
+    world.paused = true; renderer.resize();
+    for (let y = 2; y < 46; y += 2) for (let x = 2; x < 46; x += 2) world.spawn('core:tree', { x, y });
+    world.spawn('core:house', { x: 24, y: 24 }); world.spawn('core:person', { x: 24, y: 25 });
+    const select = renderer.visibleEntities, ctx = renderer.canvas.getContext('2d')!, results = [];
+    let gradients = 0;
+    const gradient = ctx.createRadialGradient;
+    ctx.createRadialGradient = function (...args: [number, number, number, number, number, number]) { gradients++; return gradient.apply(this, args); };
+    for (const zoom of [2, 3, 5]) {
+      Object.assign(renderer.camera, { x: 12, y: 12, zoom });
+      renderer.draw(world, 0);
+      const optimized = ctx.getImageData(0, 0, renderer.canvas.width, renderer.canvas.height).data;
+      const count = renderer.renderEntities.length;
+      renderer.visibleEntities = () => [...world.query('position')].sort((a, b) => a.components.position.y - b.components.position.y || a.id - b.id);
+      renderer.draw(world, 0);
+      const original = ctx.getImageData(0, 0, renderer.canvas.width, renderer.canvas.height).data;
+      renderer.visibleEntities = select;
+      results.push({ count, total: world.entities.size, gradients, same: optimized.every((v: number, i: number) => v === original[i]) });
+    }
+    return results;
+  });
+  for (const result of results) { expect(result.same).toBe(true); expect(result.count).toBeLessThan(result.total); expect(result.gradients).toBe(0); }
+});
+
+test('fast simulation accelerates residents beyond 2x while sharing frames with rendering', async ({ page }) => {
+  await page.route('**/speed-probe', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><canvas width="1440" height="960"></canvas>' }));
+  await page.goto('/speed-probe');
+  const speeds = await page.evaluate(async () => {
+    const worldPath = '/src/core/world.ts', clockPath = '/src/core/clock.ts', rendererPath = '/src/render/renderer.ts';
+    const [{ World }, { FixedClock }, { Renderer }] = await Promise.all([import(worldPath), import(clockPath), import(rendererPath)]);
+    const societyPath = '/src/systems/society.ts', { seedSettlements } = await import(societyPath);
+    const source = new World(4831);
+    seedSettlements(source);
+    for (let i = 0; i < 60; i++) source.step();
+    const snapshot = source.snapshot(), results = [];
+    const renderer = new Renderer(document.querySelector('canvas')!);
+    renderer.resize(); renderer.camera.fit(source.terrain.width, source.terrain.height);
+    for (const speed of [2, 10, 20]) {
+      const world = new World(snapshot.seed, source.registry, snapshot), clock = new FixedClock();
+      world.speed = speed;
+      // Switching speed in an open world does not rebuild its initial terrain textures.
+      renderer.draw(world, performance.now());
+      let start = 0, end = 0;
+      const durations: number[] = [];
+      await new Promise<void>(resolve => {
+        const frame = (now: number): void => {
+          if (!start) start = performance.now();
+          const frameStarted = performance.now();
+          clock.advance(now, true, () => world.step(), speed, Math.max(1, 1000 / 60 - renderer.frameMs - 2));
+          renderer.draw(world, now); end = performance.now();
+          durations.push(end - frameStarted);
+          // Compare the same stage of development; later settlements have more work per tick.
+          if (world.tick - snapshot.tick < 600) requestAnimationFrame(frame); else resolve();
+        };
+        requestAnimationFrame(frame);
+      });
+      durations.sort((a, b) => a - b);
+      results.push({ speed: (world.tick - snapshot.tick) / ((end - start) / 1000) / 30, p95: durations[Math.floor(durations.length * 0.95)] });
+    }
+    return results;
+  });
+  const measured = JSON.stringify(speeds);
+  test.info().annotations.push({ type: 'simulation-speed', description: measured });
+  // The same populated world must advance faster when a higher speed is selected.
+  for (const result of speeds) { expect(result.speed, measured).toBeGreaterThan(1); expect(result.p95, measured).toBeLessThan(25); }
+  expect(speeds[1].speed, measured).toBeGreaterThan(speeds[0].speed * 2);
+  expect(speeds[2].speed, measured).toBeGreaterThan(speeds[1].speed * 1.2);
+});
+
 test('time menu selects every speed, steps with arrows and restores a paused maximum speed', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await seed(page, { ...flatWorld().snapshot(), version: 11, speed: 5000, paused: true });
-  await expect(page.locator('#speed-value')).toHaveText('40×');
+  await seed(page, { ...flatWorld().snapshot(), version: 59, speed: 40, paused: true });
+  await expect(page.locator('#speed-value')).toHaveText('20×');
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#speed-menu')).toBeHidden();
   for (const speed of SIMULATION_SPEEDS) {
@@ -436,31 +579,33 @@ test('time menu selects every speed, steps with arrows and restores a paused max
     await expect(page.locator('#time-toggle')).toHaveAttribute('aria-label', 'Старт');
   }
   await expect(page.locator('#time-faster')).toBeDisabled();
+  await expect(page.locator('[data-speed="40"]')).toHaveCount(0);
   await page.locator('#time-slower').click();
   await expect(page.locator('#speed-value')).toHaveText('10×');
   await page.locator('#time-faster').click();
-  await expect(page.locator('#speed-value')).toHaveText('40×');
+  await expect(page.locator('#speed-value')).toHaveText('20×');
   await page.locator('#time-toggle').click();
-  await expect.poll(async () => { const s = await readSave(page); return s?.paused && s.speed === 40 && s.tick > 0; }, { timeout: 7000 }).toBe(true);
+  await expect.poll(async () => { const s = await readSave(page); return s?.paused && s.speed === 20 && s.tick > 0; }, { timeout: 7000 }).toBe(true);
   const saved = (await readSave(page))!;
   expect(saved.tick).toBeGreaterThan(0);
   await page.reload();
-  await expect(page.locator('#speed-value')).toHaveText('40×');
+  await expect(page.locator('#speed-value')).toHaveText('20×');
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   expect((await readSave(page))!.tick).toBe(saved.tick);
   await page.locator('#time-toggle').click();
-  await expect(page.locator('#speed-value')).toHaveText('40×');
+  await expect(page.locator('#speed-value')).toHaveText('20×');
   await page.locator('#time-toggle').click();
   await chooseSpeed(page, 0.2);
   await expect(page.locator('#time-slower')).toBeDisabled();
   await page.locator('#time-faster').click();
   await expect(page.locator('#speed-value')).toHaveText('1×');
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   expect(errors).toEqual([]);
 });
 
 test('time menu supports keyboard navigation, dismissal and fits compact screens', async ({ page }) => {
   await seed(page);
+  await expect(page.locator('#loading-screen')).toBeHidden();
   await page.locator('#speed-picker').focus();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('menuitemradio', { name: '1×', exact: true })).toBeFocused();
@@ -469,7 +614,7 @@ test('time menu supports keyboard navigation, dismissal and fits compact screens
   await expect(page.locator('#speed-value')).toHaveText('⅕×');
   await expect(page.locator('#speed-picker')).toBeFocused();
   await page.keyboard.press('ArrowUp'); await page.keyboard.press('End');
-  await expect(page.getByRole('menuitemradio', { name: '40×', exact: true })).toBeFocused();
+  await expect(page.getByRole('menuitemradio', { name: '20×', exact: true })).toBeFocused();
   await page.keyboard.press('Home'); await page.keyboard.press('Escape');
   await expect(page.locator('#speed-menu')).toBeHidden();
   await expect(page.locator('#speed-value')).toHaveText('⅕×');
@@ -488,48 +633,58 @@ test('time menu supports keyboard navigation, dismissal and fits compact screens
   }
 });
 
-test('number keys and numpad set speed without changing tools or acting inside settings', async ({ page }) => {
+test('number keys and numpad select tools by their position in the open tab without changing time', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await seed(page);
-  await page.locator('[data-category="destruction"]').click(); await page.getByRole('button', { name: 'Динамит', exact: true }).click();
-  await expect(page.locator('.tool kbd')).toHaveCount(0);
-  await expect(page.locator('#tool-key')).toBeHidden();
-  await expect(page.locator('.selected-power')).toHaveCount(0);
-  const controls = page.locator('.speed-controls');
-  await expect(controls.getByRole('button')).toHaveCount(4);
-  for (const prefix of ['', 'Numpad']) for (const [key, speed] of [['4', 4], ['3', 2], ['2', 1], ['1', 0]] as const) {
-    await page.keyboard.press(`${prefix}${key}`);
-    await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', String(speed === 0));
-    if (speed) await expect(page.locator(`[data-speed="${speed}"]`)).toHaveAttribute('aria-checked', 'true');
-    await expect(page.locator('#speed-menu [aria-checked="true"]')).toHaveCount(1);
-    await expect(page.locator('#tool-name')).toHaveText('Динамит');
+  await chooseSpeed(page, 4);
+  await page.locator('#time-toggle').click();
+  await page.locator('[data-category="people"]').click();
+  await page.keyboard.press('4');
+  await expect(page.locator('[data-tool="core:dwarf"]')).toHaveAttribute('aria-pressed', 'true');
+  for (const category of await page.locator('[data-category]').all()) {
+    await category.click();
+    const ids = await page.locator('.tool:not([hidden])').evaluateAll(buttons => buttons.map(button => button.getAttribute('data-tool')!));
+    for (const prefix of ['', 'Numpad']) for (let index = 0; index < Math.min(ids.length, 10); index++) {
+      await page.keyboard.press(`${prefix}${(index + 1) % 10}`);
+      await expect(page.locator(`[data-tool="${ids[index]}"]`)).toHaveAttribute('aria-pressed', 'true');
+    }
+    if (ids.length < 10) {
+      await page.keyboard.press('0');
+      await expect(page.locator(`[data-tool="${ids.at(-1)}"]`)).toHaveAttribute('aria-pressed', 'true');
+    }
+    await expect(category).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#speed-value')).toHaveText('4×');
   }
+  await page.locator('[data-category="people"]').click();
+  await page.keyboard.press('4');
   for (const modifier of ['Control', 'Alt', 'Meta']) {
     await page.keyboard.press(`${modifier}+3`);
-    await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-tool="core:dwarf"]')).toHaveAttribute('aria-pressed', 'true');
   }
-  await page.getByRole('button', { name: 'Настройки', exact: true }).click();
-  for (const key of ['2', '3', '4']) {
+  await page.locator('#settings').click();
+  for (const key of ['1', '2', '3', '4']) {
     await page.keyboard.press(key);
-    await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-tool="core:dwarf"]')).toHaveAttribute('aria-pressed', 'true');
   }
   await page.keyboard.press('Escape');
   await page.locator('#world').focus();
-  await page.keyboard.press('4'); await page.keyboard.press('Space');
-  await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('Space');
-  await expect(page.locator('[data-speed="4"]')).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('1');
+  await expect(page.locator('[data-tool="core:human"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#speed-value')).toHaveText('4×');
+  await page.keyboard.press('Space');
+  await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   expect(errors).toEqual([]);
 });
 
-for (const speed of [1, 2, 4]) {
-  test(`speed keys queue bombs while stopped and run at ${speed}x`, async ({ page }) => {
+for (const speed of [1, 2, 4] as const) {
+  test(`time controls queue bombs while stopped and run at ${speed}x`, async ({ page }) => {
     const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
     await seed(page);
     const controls = page.locator('.speed-controls');
     await expect(controls.getByRole('button')).toHaveCount(4);
-    await page.keyboard.press('1');
     await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
     const box = (await controls.boundingBox())!;
     const panel = (await page.locator('.game-panel').boundingBox())!;
@@ -542,15 +697,17 @@ for (const speed of [1, 2, 4]) {
     const stopped = (await readSave(page))!;
     expect(stopped.tick).toBe(0);
     expect(stopped.entities.filter(e => e.components.explosive).map(e => e.components.explosive!.fuse)).toEqual([2, 2, 1.25, 1.25]);
-    // Measure browser key events so automation latency is not counted as a game-speed bug.
-    await page.evaluate(() => document.addEventListener('keydown', event => {
-      if (['1', '2', '3', '4'].includes(event.key)) performance.mark(event.key === '1' ? 'playback-stop' : 'playback-start');
+    // Measure browser clicks so automation latency is not counted as a game-speed bug.
+    await page.evaluate(() => document.addEventListener('click', event => {
+      const target = event.target as Element;
+      if (target.closest('[data-speed]')) performance.mark('playback-start');
+      else if (target.closest('#time-toggle')) performance.mark('playback-stop');
     }, { capture: true }));
-    await page.keyboard.press(speed === 1 ? '2' : speed === 2 ? '3' : '4');
+    await chooseSpeed(page, speed);
     await expect(page.locator('#speed-value')).toHaveText(`${speed}×`);
     await expect(page.locator('#tool-name')).toHaveText('Ракета');
     await page.waitForTimeout(750);
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     const elapsed = await page.evaluate(() => (performance.getEntriesByName('playback-stop').at(-1)!.startTime - performance.getEntriesByName('playback-start').at(-1)!.startTime) / 1000);
     await expect.poll(async () => { const s = await readSave(page); return !!s && s.tick > 0 && s.paused; }, { timeout: 7000 }).toBe(true);
     const saved = (await readSave(page))!;
@@ -566,7 +723,7 @@ for (const speed of [1, 2, 4]) {
     await expect(page.locator('#speed-value')).toHaveText(`${speed}×`);
     await chooseSpeed(page, 1);
     await expect(page.locator('#speed-value')).toHaveText('1×');
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     await page.setViewportSize({ width: 900, height: 650 });
     const compactPanel = (await page.locator('.game-panel').boundingBox())!;
     for (const button of await controls.getByRole('button').all()) {
@@ -708,9 +865,9 @@ test('thunderstorm replaces rain, draws lightning, burns objects and restores it
     return count;
   }, target);
   expect(await lightningPixels()).toBe(0);
-  await page.locator('#world').focus(); await page.keyboard.press('2');
+  await page.locator('#world').focus(); await chooseSpeed(page, 1);
   await expect.poll(lightningPixels, { intervals: [50] }).toBeGreaterThan(5);
-  await page.keyboard.press('1');
+  await page.locator('#time-toggle').click();
   await expect(page.locator('#time-toggle')).toHaveAttribute('aria-pressed', 'true');
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await expect.poll(async () => (await readSave(page))?.entities.filter(e => e.components.thermal?.burning).length).toBe(3);
@@ -773,6 +930,7 @@ test('four tools, keyboard, pause, camera, settlement and autosave reload', asyn
   await page.locator('#settings').click();
   await page.getByRole('button', { name: 'Новый мир', exact: true }).click();
   await expect(page.locator('#settings-dialog')).toBeHidden();
+  await page.locator('#world-seed').fill('0');
   await page.getByRole('button', { name: 'Создать мир', exact: true }).click();
   await expect(page.locator('#population')).toHaveText('0');
   await expect(page.locator('#save-status')).toBeHidden();
@@ -881,7 +1039,7 @@ test('Hammer of Dawn follows the held pointer beyond three seconds and stops aft
   await page.getByRole('button', { name: 'Разрушение', exact: true }).click();
   await page.getByRole('button', { name: 'Молот рассвета', exact: true }).click();
   await expect(page.locator('#tool-hint')).toContainText('Ведите курсор');
-  await page.keyboard.press('2');
+  await chooseSpeed(page, 1);
   await page.mouse.move(...Object.values(point(12, 24)) as [number, number]); await page.mouse.down();
   await page.mouse.move(...Object.values(point(36, 24)) as [number, number], { steps: 6 });
   await expect.poll(async () => {
@@ -980,9 +1138,9 @@ test.describe('settlement migration and seasons', () => {
     await expect(page.locator('#population')).toHaveText('3');
     await page.reload(); await expect(page.locator('#season-name')).toHaveText('Spring');
     expect((await readSave(page))!.society.migrations).toEqual([group]);
-    await page.keyboard.press('4');
+    await chooseSpeed(page, 4);
     await expect(page.locator('#chronicle')).toContainText('Migrants arrived in', { timeout: 25000 });
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     await expect.poll(async () => (await readSave(page))?.paused, { timeout: 7000 }).toBe(true);
     const saved = (await readSave(page))!;
     expect(saved.society.migrations).toHaveLength(0);
@@ -996,10 +1154,10 @@ test.describe('settlement migration and seasons', () => {
     const world = pioneerWorld(); world.tick = 150; migrations(world); world.paused = true;
     const members = [...world.society.migrations[0].members];
     await seed(page, world.snapshot()); await expect(page.locator('#village-count')).toHaveText('1');
-    await page.keyboard.press('4');
+    await chooseSpeed(page, 4);
     await expect(page.locator('#village-count')).toHaveText('2', { timeout: 25000 });
     await expect.poll(async () => (await readSave(page))?.entities.some(e => e.components.farm?.villageId === 2), { timeout: 10000 }).toBe(true);
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     await expect.poll(async () => (await readSave(page))?.paused, { timeout: 7000 }).toBe(true);
     const saved = (await readSave(page))!;
     expect(saved.society.roads.some(r => r.a === 1 && r.b === 2)).toBe(true);
@@ -1015,9 +1173,9 @@ test.describe('settlement migration and seasons', () => {
     for (const e of world.query('person')) { e.components.person!.reproduceIn = 100000; e.components.citizen!.hunger = 60; }
     await seed(page, world.snapshot()); await expect(page.locator('#season-name')).toHaveText('Autumn');
     await expect(page.locator('#food-stocks')).toHaveText('100');
-    await page.keyboard.press('4'); await expect(page.locator('#season-name')).toHaveText('Winter');
+    await chooseSpeed(page, 4); await expect(page.locator('#season-name')).toHaveText('Winter');
     await expect.poll(async () => Number(await page.locator('#food-stocks').textContent())).toBeLessThan(100);
-    await page.keyboard.press('1');
+    await page.locator('#time-toggle').click();
     await expect.poll(async () => {
       const saved = await readSave(page);
       return saved?.paused && saved.tick >= 5400 && saved.society.villages[0].food < 100;
@@ -1151,6 +1309,24 @@ for (const language of [
     expect(errors).toEqual([]);
   });
 }
+
+test('hides unit parameters while retaining their inspector, saved values and simulation', async ({ page }) => {
+  await page.route('**/hidden-parameters', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div id="app"></div></body></html>' }));
+  await page.goto('/hidden-parameters');
+  const result = await page.evaluate(async () => {
+    const worldPath = '/src/core/world.ts', uiPath = '/src/ui.ts', statsPath = '/src/ui/unit-stats.ts';
+    const { World } = await import(worldPath), { UI } = await import(uiPath), { statsInspector } = await import(statsPath);
+    const world = new World(4831), entity = world.spawn('core:person', { x: 256, y: 192 })!;
+    const ui = new UI(world.registry, () => {});
+    ui.update(world, 1); ui.unitInspector.select(entity.id);
+    const before = JSON.stringify(entity.components.stats), hidden = !ui.unitInspector.panel.querySelector('[data-unit-stats]');
+    const retained = statsInspector(world, entity, 'en', true).includes('data-unit-stats');
+    const saved = world.snapshot().entities.find((e: { id: number }) => e.id === entity.id);
+    world.step();
+    return { hidden, retained, saved: JSON.stringify(saved.components.stats) === before, tick: world.tick };
+  });
+  expect(result).toEqual({ hidden: true, retained: true, saved: true, tick: 1 });
+});
 
 test('benchmarks simulation and rendering with 300 residents and explosions', async ({ page }, testInfo) => {
   await page.goto('/');

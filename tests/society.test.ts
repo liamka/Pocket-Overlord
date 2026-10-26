@@ -2,12 +2,83 @@ import { describe, expect, it } from 'vitest';
 import { localizedSettlementName, refreshLegacySettlementNames, settlementName, settlementTextLocalizer } from '../src/content/settlement-names';
 import { languages, translate } from '../src/i18n';
 import { World } from '../src/core/world';
+import { BIOMES } from '../src/core/biomes';
+import { buildingCells, buildingRoute, operational } from '../src/core/buildings';
+import { raceOf } from '../src/core/races';
 import { Terrain, type Village } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
 import { applyEvent, processEvents } from '../src/systems/effects';
-import { intentions } from '../src/systems/people';
-import { assignHouse, diplomacy, roads } from '../src/systems/society';
-import { advance, flatWorld, villageWorld } from './helpers';
+import { intentions, settlement } from '../src/systems/people';
+import { startReproduction } from '../src/core/reproduction';
+import { assignHouse, diplomacy, fertilePatch, roads, seedSettlements } from '../src/systems/society';
+import { findPath } from '../src/systems/navigation';
+import { setFood, advance, flatWorld, villageWorld, workRoad } from './helpers';
+
+describe('settlements on new maps', () => {
+  it.each(BIOMES)('starts with inhabited, accessible settlements on $id', biome => {
+    const world = new World(4, undefined, undefined, undefined, biome.id);
+    const landscape = world.terrain.snapshot(), naturalObjects = [...world.entities.values()].map(e => structuredClone(e));
+    seedSettlements(world);
+    expect(world.tick).toBe(0);
+    expect(world.society.villages).toHaveLength(3);
+    expect(world.terrain.snapshot()).toEqual(landscape);
+    for (const entity of naturalObjects) expect(world.entities.get(entity.id)).toEqual(entity);
+    for (const village of world.society.villages) {
+      const houses = [...world.query('dwelling')].filter(e => e.components.dwelling!.villageId === village.id);
+      const residents = [...world.query('person')].filter(e => e.components.citizen!.villageId === village.id);
+      const fields = [...world.query('farm')].filter(e => e.components.farm!.villageId === village.id);
+      expect(houses.length).toBeGreaterThanOrEqual(2);
+      expect(houses.length).toBeLessThanOrEqual(3);
+      expect(residents).toHaveLength(houses.length * 4);
+      expect(fields).toHaveLength(1);
+      expect(fertilePatch(world, fields[0].components.position!)).toBe(true);
+      expect(village.food).toBeGreaterThanOrEqual(residents.length * 4);
+      expect(village.economy!.storage!.some(store => (store.goods.provisions ?? 0) > 0)).toBe(true);
+      for (const house of houses) {
+        expect(operational(house)).toBe(true);
+        expect(raceOf(house)).toBe(village.race);
+        expect(house.components.building!.project).toBeUndefined();
+        for (const p of buildingCells(house)) expect(world.terrain.isLand(p.x, p.y)).toBe(true);
+        expect(world.canStand(house.components.position!, 1.1, house.id)).toBe(true);
+      }
+      for (const resident of residents) {
+        const home = world.entities.get(resident.components.person!.homeId!)!;
+        expect(houses).toContain(home);
+        expect(raceOf(resident)).toBe(village.race);
+        expect(world.canStand(resident.components.position!, 0.35, resident.id)).toBe(true);
+        expect(buildingRoute(world, resident.components.position!, home)).toBeDefined();
+        expect(findPath(world, resident.components.position!, fields[0].components.position!, 1.8)).toBeDefined();
+      }
+    }
+    expect(world.society.relations).toHaveLength(3);
+  });
+
+  it('repeats the same starting settlements and restores them without adding more', () => {
+    const first = new World(1), second = new World(1);
+    seedSettlements(first); seedSettlements(second);
+    expect(first.society.villages).toHaveLength(2);
+    const snapshot = first.snapshot();
+    expect(second.snapshot()).toEqual(snapshot);
+    const restored = new World(snapshot.seed, first.registry, decodeSave(snapshot, first.registry));
+    seedSettlements(restored);
+    expect(restored.snapshot()).toEqual(snapshot);
+    advance(restored, 2);
+    expect(restored.society.villages).toHaveLength(2);
+    expect(restored.population).toBe(first.population);
+  });
+
+  it('also allows empty maps and skips terrain without suitable land', () => {
+    const empty = new World(0), before = empty.snapshot();
+    seedSettlements(empty);
+    expect(empty.snapshot()).toEqual(before);
+    const sea = new World(4);
+    sea.terrain.tiles.fill(Terrain.Water);
+    seedSettlements(sea);
+    expect(sea.society.villages).toHaveLength(0);
+    expect(sea.population).toBe(0);
+    expect(sea.houseCount).toBe(0);
+  });
+});
 
 describe('village life', () => {
   it.each(languages)('generates distinct settlement names reproducibly in $id', ({ id: language }) => {
@@ -167,7 +238,7 @@ describe('village life', () => {
     const world = villageWorld();
     expect(world.society.villages).toHaveLength(2);
     expect(new Set([...world.query('citizen')].map(e => e.components.citizen!.villageId)).size).toBe(2);
-    advance(world, 15);
+    workRoad(world);
     const road = world.society.roads[0];
     expect(road.tiles.length).toBeGreaterThan(20);
     expect(road.built).toBe(road.tiles.length);
@@ -205,55 +276,61 @@ describe('village life', () => {
   it('hunger damages residents without food, and a meal consumes village stores', () => {
     const world = villageWorld([{ x: 24, y: 24 }]);
     const person = [...world.query('person')][0], c = person.components.citizen!, village = world.society.villages[0];
-    c.hunger = 95; village.food = 0;
+    c.hunger = 95; setFood(village, 0);
     const health = person.components.health!.current;
     world.tick = 45; intentions(world); processEvents(world);
     expect(person.components.health!.current).toBeLessThan(health);
     const house = [...world.query('dwelling')][0];
     person.components.position = { x: 24, y: 26 }; world.spatial.update(person);
-    c.task = 'eat'; c.targetId = house.id; c.hunger = 70; village.food = 5;
+    c.task = 'eat'; c.targetId = house.id; c.hunger = 70; setFood(village, 5);
     world.tick = 60; intentions(world);
     expect(c.hunger).toBeLessThan(30); expect(village.food).toBe(4);
   });
-  it('forms lasting couples, records parents, and completes pregnancy after the father dies', () => {
-    const world = villageWorld([{ x: 24, y: 24 }]);
-    const mother = [...world.query('person')].find(e => e.components.person!.sex === 'a')!;
-    const father = world.entities.get(mother.components.citizen!.partnerId!)!;
-    mother.components.person!.reproduceIn = 0; father.components.person!.reproduceIn = 0;
-    advance(world, 1);
+  it('forms a couple and cancels its pending birth after the father dies', () => {
+    const world = flatWorld(), home = world.spawn('core:house', { x: 24, y: 24 })!, village = assignHouse(world, home);
+    const mother = world.spawn('core:person', { x: 21, y: 24 })!, father = world.spawn('core:person', { x: 22, y: 24 })!;
+    mother.components.person!.sex = 'a'; father.components.person!.sex = 'b';
+    for (const e of [mother, father]) {
+      e.components.person!.homeId = home.id; e.components.citizen!.villageId = village.id;
+      e.components.reproduction!.cooldowns = {}; e.components.citizen!.hunger = 0;
+    }
+    settlement(world);
+    expect(mother.components.citizen!.partnerId).toBe(father.id);
+    expect(startReproduction(world, mother, 'sexual', father)).toBe(true);
     expect(mother.components.citizen!.pregnancy).toBeGreaterThan(0);
     const fatherId = father.id; world.remove(fatherId);
     expect(mother.components.citizen!.partnerId).toBeNull();
     advance(world, 17);
     const baby = [...world.query('citizen')].find(e => e.components.citizen!.parents.includes(mother.id));
-    expect(baby?.components.citizen!.parents).toEqual([mother.id, fatherId]);
-    expect(baby?.components.person!.age).toBeLessThan(1);
+    expect(baby).toBeUndefined();
+    expect(mother.components.reproduction!.pending).toBeUndefined();
+    expect(mother.components.citizen!.pregnancy).toBe(0);
     expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
   });
   it('does not pair siblings or start pregnancies without food', () => {
     const world = flatWorld(); world.spawn('core:house', { x: 24, y: 24 });
     const a = world.spawn('core:person', { x: 22, y: 24 })!, b = world.spawn('core:person', { x: 26, y: 24 })!;
     a.components.person!.sex = 'a'; b.components.person!.sex = 'b';
-    for (const e of [a, b]) { e.components.citizen!.parents = [100, 101]; e.components.person!.reproduceIn = 0; }
+    for (const e of [a, b]) { e.components.citizen!.parents = [100, 101]; e.components.reproduction!.cooldowns = {}; e.components.citizen!.hunger = 75; }
     advance(world, 1);
     expect(a.components.citizen!.partnerId).toBeNull(); expect(b.components.citizen!.partnerId).toBeNull();
-    b.components.citizen!.parents = []; world.society.villages[0].food = 0;
+    b.components.citizen!.parents = []; setFood(world.society.villages[0], 0);
     advance(world, 1);
     expect(a.components.citizen!.partnerId).toBe(b.id); expect(a.components.citizen!.pregnancy).toBe(0);
   });
   it('forms alliances under prosperity but waits for a completed road before sending food', () => {
     const world = villageWorld([{ x: 6, y: 6 }, { x: 40, y: 40 }]);
     const [a, b] = world.society.villages, r = world.society.relations[0];
-    a.food = 60; b.food = 30; r.affinity = 18; r.nextDecision = 0;
+    setFood(a, 60); setFood(b, 30); r.affinity = 18; r.nextDecision = 0;
     diplomacy(world); expect(r.status).toBe('alliance');
-    b.food = 0; r.affinity = 50; r.nextDecision = 0;
+    setFood(b, 0); r.affinity = 50; r.nextDecision = 0;
     diplomacy(world); expect(b.food).toBe(0); expect(a.food).toBe(60);
     expect([...world.query('caravan')]).toHaveLength(0);
   });
   it('resource conflict leads to combat damage and a timed truce', () => {
     const world = villageWorld(); advance(world, 15);
     const [a, b] = world.society.villages, r = world.society.relations[0];
-    a.food = 0; b.food = 0; r.affinity = -24; r.nextDecision = 0;
+    setFood(a, 0); setFood(b, 0); r.affinity = -24; r.nextDecision = 0;
     diplomacy(world); expect(r.status).toBe('war');
     const attacker = [...world.query('citizen')].find(e => e.components.citizen!.villageId === a.id && e.id % 3 !== 0)!;
     const victim = [...world.query('citizen')].find(e => e.components.citizen!.villageId === b.id)!;

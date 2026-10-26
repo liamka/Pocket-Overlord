@@ -1,3 +1,4 @@
+import type { ResourceBundle } from './resources';
 import type { World } from './world';
 import { Terrain, type Entity, type Vec2 } from './types';
 
@@ -21,6 +22,11 @@ export interface ShipState {
   phase: 'docked' | 'sailing' | 'fishing' | 'returning' | 'idle';
   wait: number;
   cargo: number;
+  foodGoods?: ResourceBundle;
+  cargoOwnerId?: number;
+  targetOwnerId?: number | null;
+  /** A generated arrival income, never an imaginary mineral cargo. */
+  goldVoyage?: { fromId: number; toId: number; departed: number; settled: boolean; income: number };
   path: Vec2[];
   next: number;
   wake: { x: number; y: number; heading: number; age: number }[];
@@ -41,7 +47,7 @@ export function canSail(world: World, p: Vec2, radius = SHIP_CLEARANCE): boolean
   for (let y = Math.floor(p.y - radius); y <= Math.floor(p.y + radius); y++) {
     for (let x = Math.floor(p.x - radius); x <= Math.floor(p.x + radius); x++) {
       const dx = Math.max(x - p.x, 0, p.x - x - 1), dy = Math.max(y - p.y, 0, p.y - y - 1);
-      if (dx * dx + dy * dy < radius * radius && map.at(x, y) >= Terrain.Sand) return false;
+      if (dx * dx + dy * dy < radius * radius && !map.isOpenWater(x, y)) return false;
     }
   }
   return true;
@@ -100,7 +106,7 @@ export function harborSite(world: World, p: Vec2): number | undefined {
     let clear = true;
     for (let along = 1; along <= 5; along++) for (let across = -1; across <= 1; across++) {
       const x = p.x + dx * along - dy * across, y = p.y + dy * along + dx * across;
-      if (!map.inside(x, y) || map.at(x, y) >= Terrain.Sand) clear = false;
+      if (!map.isOpenWater(x, y)) clear = false;
     }
     if (clear && canSail(world, { x: p.x + dx * 5.5, y: p.y + dy * 5.5 })) return direction;
   }

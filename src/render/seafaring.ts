@@ -1,6 +1,7 @@
 import type { Entity } from '../core/types';
 import type { ShipState } from '../core/seafaring';
 import { harborBerth } from '../core/seafaring';
+import { bundleSize } from '../core/resources';
 import { TILE } from './camera';
 
 type Point = readonly [number, number];
@@ -135,8 +136,10 @@ export function drawShipWake(ctx: CanvasRenderingContext2D, entity: Entity): voi
 
 export function drawShip(ctx: CanvasRenderingContext2D, entity: Entity, time: number, color?: string): void {
   const ship = entity.components.ship!, p = entity.components.position!;
+  const voyage = entity.components.foreignVoyage;
+  const cargo = voyage ? Math.min(24, bundleSize(voyage.goods) + bundleSize(voyage.purchases)) : ship.cargo;
   ctx.save(); ctx.translate(Math.round(p.x * TILE), Math.round(p.y * TILE));
-  drawShipSprite(ctx, time + entity.id * 0.73, ship.heading, ship.kind, ship.sail, ship.speed, ship.turn, color, ship.cargo, ship.phase === 'fishing');
+  drawShipSprite(ctx, time + entity.id * 0.73, ship.heading, ship.kind, ship.sail, ship.speed, ship.turn, color, cargo, ship.phase === 'fishing');
   ctx.restore();
 }
 

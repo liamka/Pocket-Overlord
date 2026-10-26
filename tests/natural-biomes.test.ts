@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { BIOME_SURFACES, NATURAL_BIOMES, SEED_BIOMES, NaturalBiome } from '../src/core/natural-biomes';
+import { NATURAL_BIOMES, SEED_BIOMES, NaturalBiome } from '../src/core/natural-biomes';
 import { BIOMES } from '../src/core/biomes';
 import { generateTerrain } from '../src/core/terrain';
 import { World } from '../src/core/world';
 import { SAVE_VERSION, Terrain, type WorldSnapshot } from '../src/core/types';
 import { decodeSave } from '../src/persistence/schema';
-import { agriculture, assignHouse, fertilePatch } from '../src/systems/society';
+import { agriculture, assignHouse } from '../src/systems/society';
 import { movement } from '../src/systems/people';
 import { landscape } from '../src/systems/landscape';
 import { flatWorld } from './helpers';
@@ -15,26 +15,23 @@ beforeAll(() => { base = flatWorld().snapshot(); }, 30000);
 const biomeWorld = (): World => new World(base.seed, undefined, base);
 
 describe('natural biomes', () => {
-  it('generates reproducible, contiguous climate regions without replacing shores or island shapes', () => {
-    const map = generateTerrain(20), repeat = generateTerrain(20);
-    expect(map.snapshot()).toEqual(repeat.snapshot());
-    const counts = NATURAL_BIOMES.map(() => 0);
-    let neighbors = 0, matches = 0;
-    for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
-      if (map.at(x, y) !== Terrain.Grass) continue;
-      counts[map.biomeAt(x, y).id]++;
-      if (map.at(x + 1, y) === Terrain.Grass) { neighbors++; if (map.biomeAt(x, y).id === map.biomeAt(x + 1, y).id) matches++; }
+  it.each(BIOMES)('generates one reproducible biome across the entire $id world', biome => {
+    const choices = new Set<number>();
+    for (const seed of [0, 20, 42, 0xffffffff]) {
+      const map = generateTerrain(seed, 128, 96, biome.id);
+      expect(new Set(map.biomes).size).toBe(1);
+      choices.add(map.biomes[0]);
+      expect(map.snapshot()).toEqual(generateTerrain(seed, 128, 96, biome.id).snapshot());
+      expect(new Set(generateTerrain(seed, 96, 128).biomes)).toEqual(new Set(map.biomes));
+      expect(map.tiles).toEqual(generateTerrain(seed, 128, 96, biome.id, NaturalBiome.Grassland).tiles);
+      expect(map.tiles).toContain(Terrain.Sand);
+      if (biome.id !== 'yin-yang') expect(map.tiles).toContain(Terrain.Mountain);
+      const surfaces = map.tiles.flatMap((tile, i) => tile === Terrain.Grass || tile === Terrain.Mountain ? [map.surfaces[i]] : []);
+      expect(surfaces.filter(surface => surface > 0).length / surfaces.length).toBeGreaterThanOrEqual(0.15);
+      expect(new Set(surfaces)).toEqual(new Set([0, 1, 2, 3]));
     }
-    expect(counts.every(count => count > 20)).toBe(true);
-    expect(matches / neighbors).toBeGreaterThan(0.95);
-    expect(map.tiles.some(t => t === Terrain.Sand)).toBe(true);
-    expect(map.tiles.some(t => t === Terrain.Mountain)).toBe(true);
-    for (const biome of NATURAL_BIOMES) {
-      const region = map.tiles.flatMap((tile, i) => (tile === Terrain.Grass || tile === Terrain.Mountain) && map.biomes[i] === biome.id ? [map.surfaces[i]] : []);
-      expect(region.filter(surface => surface > 0).length / region.length).toBeGreaterThanOrEqual(0.15);
-      expect(new Set(region)).toEqual(new Set([0, 1, 2, 3]));
-    }
-  }, 30000);
+    expect(choices.size).toBeGreaterThan(1);
+  });
 
   it.each(BIOMES)('leaves at least 15% of permafrost land in clearings on the $id island', biome => {
     const map = generateTerrain(20, 128, 128, biome.id, NaturalBiome.Permafrost);
@@ -61,6 +58,7 @@ describe('natural biomes', () => {
 
   it.each(NATURAL_BIOMES)('adds three local surfaces to $key without changing its climate', biome => {
     const map = generateTerrain(42, 128, 96, 'phoenix', biome.id);
+    expect(new Set(map.biomes)).toEqual(new Set([biome.id]));
     const land = map.tiles.flatMap((tile, i) => tile === Terrain.Grass || tile === Terrain.Mountain ? [i] : []);
     expect(new Set(land.map(i => map.biomes[i]))).toEqual(new Set([biome.id]));
     expect(new Set(land.map(i => map.surfaces[i]))).toEqual(new Set([0, 1, 2, 3]));
@@ -68,20 +66,25 @@ describe('natural biomes', () => {
     expect(map.tiles.every((tile, i) => tile === Terrain.Grass || tile === Terrain.Mountain || map.surfaces[i] === 0)).toBe(true);
   });
 
-  it('keeps ice and stone barren and maps painted surfaces to the new biome', () => {
+  it('replaces local surfaces even when painting the same biome and refreshes the ground', () => {
     const world = biomeWorld(), map = world.terrain;
     for (const biome of SEED_BIOMES) {
       for (let surface = 1; surface <= 3; surface++) {
+        map.biomes.fill(biome.id);
         map.surfaces.fill(surface);
+        map.dirty.clear();
+        const revision = map.revision;
         world.command({ kind: 'use-tool', toolId: `core:biome-${biome.key}`, x: 20, y: 20 });
-        expect(map.surfaceAt(20, 20)).toEqual(BIOME_SURFACES[biome.id][surface - 1]);
-        expect([...world.query('solid')]).toHaveLength(0);
-        if (['ice', 'stone', 'water'].includes(map.surfaceAt(20, 20)!.kind)) expect(fertilePatch(world, { x: 20, y: 20 })).toBe(false);
+        expect(map.surfaceAt(20, 20)).toBeUndefined();
+        expect(map.biomeAt(20, 20).id).toBe(biome.id);
+        expect(map.surfaces[map.index(30, 20)]).toBe(surface);
+        expect(map.dirty.has(map.index(20, 20))).toBe(true);
+        expect(map.revision).toBeGreaterThan(revision);
       }
     }
   });
 
-  it.each(SEED_BIOMES)('plants $key while paused without changing water, beaches, mountains, roads or buildings', biome => {
+  it.each(SEED_BIOMES)('plants $key over water and beaches while preserving mountains, roads and buildings', biome => {
     const world = biomeWorld(), map = world.terrain;
     const surfaces = [Terrain.Water, Terrain.DeepWater, Terrain.Sand, Terrain.Mountain, Terrain.BridgeHorizontal, Terrain.Road];
     surfaces.forEach((tile, i) => map.set(17 + i, 20, tile));
@@ -91,13 +94,15 @@ describe('natural biomes', () => {
     tree.components.health!.current = 25;
     const entities = [home, field, tree].map(e => structuredClone(e));
     const before = [...map.tiles]; world.paused = true;
+    for (let x = 17; x <= 19; x++) before[map.index(x, 20)] = Terrain.Grass;
     world.command({ kind: 'use-tool', toolId: `core:biome-${biome.key}`, x: 20, y: 20 });
     world.step();
     expect(world.tick).toBe(0);
     expect(map.tiles).toEqual(before);
     expect(map.biomeAt(20, 23).id).toBe(biome.id);
     expect(map.biomeAt(30, 20).id).toBe(NaturalBiome.Grassland);
-    surfaces.slice(0, -1).forEach((_, i) => expect(map.biomeAt(17 + i, 20).id).toBe(NaturalBiome.Grassland));
+    for (let x = 17; x <= 19; x++) expect(map.biomeAt(x, 20).id).toBe(biome.id);
+    for (let x = 20; x <= 21; x++) expect(map.biomeAt(x, 20).id).toBe(NaturalBiome.Grassland);
     expect(map.biomeAt(22, 20).id).toBe(biome.id);
     expect([home, field, tree]).toEqual(entities);
     for (const e of world.query('solid', 'position')) if (e.typeId === 'core:tree' && e.id !== tree.id) {
@@ -105,15 +110,66 @@ describe('natural biomes', () => {
     }
   });
 
+  it.each(SEED_BIOMES)('paints $key on pure water or sand, keeps the brush boundary and survives save/load', biome => {
+    for (const tile of [Terrain.DeepWater, Terrain.Water, Terrain.Sand]) {
+      const world = biomeWorld(), map = world.terrain;
+      map.tiles.fill(tile);
+      map.biomes.fill(NaturalBiome.Crystal);
+      const toolId = `core:biome-${biome.key}`, point = { x: 20, y: 20 };
+      expect(world.registry.tools.get(toolId)!.canApply!(world, point)).toBe(true);
+      world.command({ kind: 'use-tool', toolId, ...point });
+      expect(map.at(20, 20)).toBe(Terrain.Grass);
+      expect(map.biomeAt(20, 20).id).toBe(biome.id);
+      expect(map.at(26, 20)).toBe(tile);
+      expect(map.biomeAt(26, 20).id).toBe(NaturalBiome.Crystal);
+      const snapshot = decodeSave(JSON.parse(JSON.stringify(world.snapshot())), world.registry);
+      const restored = new World(world.seed, world.registry, snapshot);
+      expect(restored.terrain.snapshot()).toEqual(map.snapshot());
+      expect(map.canPaintBiome(-1, 20)).toBe(false);
+      expect(map.canPaintBiome(map.width, 20)).toBe(false);
+    }
+  });
+
   it('repeated seed strokes do not multiply vegetation, and jungle planting is denser than desert planting', () => {
     const plant = (key: string) => {
       const world = biomeWorld();
-      const command = { kind: 'use-tool', toolId: `core:biome-${key}`, x: 20, y: 20 } as const;
-      world.command(command); const snapshot = world.snapshot(); world.command(command);
+      // A single brush can now fall entirely inside a glade; compare the whole region.
+      const commands = Array.from({ length: 25 }, (_, i) => ({ kind: 'use-tool', toolId: `core:biome-${key}`, x: 6 + i % 5 * 8, y: 6 + Math.floor(i / 5) * 8 } as const));
+      for (const command of commands) world.command(command);
+      const snapshot = world.snapshot();
+      for (const command of commands) world.command(command);
       expect(world.snapshot()).toEqual(snapshot);
       return [...world.query('solid')].length;
     };
     expect(plant('jungle')).toBeGreaterThan(plant('desert'));
+  });
+
+  it('groups trees into groves with open grass glades and preserves their positions when saved', () => {
+    const world = new World(20, undefined, undefined, [], 'turtle', NaturalBiome.Grassland);
+    const trees = [...world.query('tree', 'position')];
+    const positions = trees.map(tree => tree.components.position!);
+    expect(positions.length).toBeGreaterThan(100);
+    let crowded = 0, solitary = 0;
+    for (const p of positions) {
+      const neighbors = world.nearby(p, 6).filter(e => e.components.tree).length - 1;
+      if (neighbors >= 5) crowded++;
+      if (neighbors === 0) solitary++;
+      expect(world.nearby(p, 1.64).filter(e => e.components.tree)).toHaveLength(1);
+      expect(world.terrain.at(p.x, p.y)).toBe(Terrain.Grass);
+      expect(world.terrain.surfaceAt(p.x, p.y)).toBeUndefined();
+    }
+    expect(crowded / trees.length).toBeGreaterThan(0.25);
+    expect(solitary).toBeGreaterThan(10);
+    let glades = 0;
+    for (let y = 16; y < world.terrain.height - 16; y += 12) for (let x = 16; x < world.terrain.width - 16; x += 12) {
+      if (world.terrain.at(x, y) === Terrain.Grass && !world.terrain.surfaceAt(x, y)
+        && !world.nearby({ x, y }, 10).some(e => e.components.tree)) glades++;
+    }
+    expect(glades).toBeGreaterThan(10);
+    const restored = new World(world.seed, world.registry, world.snapshot(), []);
+    expect([...restored.query('tree', 'position')].map(tree => tree.components.position)).toEqual(positions);
+    const repeated = new World(20, undefined, undefined, [], 'turtle', NaturalBiome.Grassland);
+    expect([...repeated.query('tree', 'position')].map(tree => tree.components.position)).toEqual(positions);
   });
 
   it('changes walking speed in wetlands and snow while roads retain their travel benefit', () => {

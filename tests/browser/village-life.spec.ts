@@ -36,7 +36,7 @@ test('the real renderer shows the elder, livestock and market details with trans
     }
     Object.assign(economyOf(village).stocks, { grain: 8, flour: 2, bread: 4, wood: 6, tools: 2 });
     world.tick = 900; governance(world); world.paused = true;
-    const canvas = document.querySelector('canvas')!, renderer = new Renderer(canvas);
+    const canvas = document.querySelector('canvas')!, renderer = new Renderer(canvas, true);
     renderer.resize(); renderer.camera.x = 24; renderer.camera.y = 25; renderer.camera.zoom = 3;
     const ctx = canvas.getContext('2d')!, original = ctx.fillText.bind(ctx), lines: string[] = [];
     ctx.fillText = (text, x, y, maxWidth) => { lines.push(text); original(text, x, y, maxWidth); };

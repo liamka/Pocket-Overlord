@@ -1,31 +1,35 @@
 import type { Animal, WorkplaceKind } from '../core/village-life';
+import type { ColorRoles } from '../content/phenotypes';
+import { resolveBodyColors } from './appearance';
 
 const pixel = (ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w = 1, h = 1): void => {
   ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), w, h);
 };
 
-export function drawAnimal(ctx: CanvasRenderingContext2D, animal: Pick<Animal, 'kind' | 'age' | 'heading' | 'stride' | 'moving' | 'hunger'>, color = '#7ab9c0'): void {
+export function drawAnimal(ctx: CanvasRenderingContext2D, animal: Pick<Animal, 'kind' | 'age' | 'heading' | 'stride' | 'moving' | 'hunger'>, color = '#7ab9c0', adult = animal.age >= 16, body?: ColorRoles): void {
   const { kind, stride, moving } = animal;
+  const colors = resolveBodyColors(kind, body);
   ctx.save();
   if (Math.cos(animal.heading) < 0) ctx.scale(-1, 1);
-  if (animal.age < 18) ctx.scale(0.65, 0.65);
+  if (!adult) ctx.scale(0.65, 0.65);
   const sheep = kind === 'sheep', wolf = kind === 'wolf', gait = moving ? Math.sin(stride) * 2 : 0;
+  if (sheep || kind === 'dog') ctx.scale(0.7, 0.7);
   const r = (c: string, x: number, y: number, w = 1, h = 1): void => pixel(ctx, c, x, y, w, h);
   r('#20362b55', -7, 1, 15, 3);
   for (const [x, phase] of [[-5, 1], [-3, -1], [3, -1], [5, 1]]) {
-    r(wolf ? '#48565a' : '#65513d', x + gait * phase, -2, 2, 5); r('#323b33', x + gait * phase, 2, 2, 1);
+    r(colors.legs, x + gait * phase, -2, 2, 5); r('#323b33', x + gait * phase, 2, 2, 1);
   }
   if (sheep) {
-    r('#b6b8a0', -7, -9, 14, 8); r('#e8e6cb', -8, -9, 14, 6); r('#f8f0d5', -6, -11, 10, 7);
-    for (let i = 0; i < 4; i++) r('#fff8dc', -5 + i * 3, -10 + i % 2, 2, 2);
+    r(colors.shadow, -7, -9, 14, 8); r(colors.middle, -8, -9, 14, 6); r(colors.light, -6, -11, 10, 7);
+    for (let i = 0; i < 4; i++) r(colors.accent, -5 + i * 3, -10 + i % 2, 2, 2);
     const lower = !moving && animal.hunger > 25 ? 3 : 0;
-    r('#51493a', 5, -10 + lower, 5, 7); r('#8c8064', 9, -7 + lower, 3, 3);
-    r('#b9ae87', 3, -10 + lower, 3, 2); r('#171f20', 8, -9 + lower); r('#e6ddbd', -9, -7, 2, 3);
+    r(colors.face, 5, -10 + lower, 5, 7); r(colors.muzzle, 9, -7 + lower, 3, 3);
+    r(colors.earLight, 3, -10 + lower, 3, 2); r('#171f20', 8, -9 + lower); r(colors.tail, -9, -7, 2, 3);
   } else {
-    const fur = wolf ? '#83918d' : '#be8952', light = wolf ? '#b7beb0' : '#e3be83';
+    const fur = colors.middle, light = colors.light;
     r(fur, -7, -7, 14, 6); r(light, -5, -7, 8, 2); r(fur, 4, -11, 6, 7);
     r(light, 8, -7, 5, 3); r('#28332e', 12, -7, 2, 2); r('#152425', 8, -9);
-    r(wolf ? '#495b5c' : '#75503a', 4, -13, 2, 4); r(fur, 8, -13, 2, 3);
+    r(colors.ears, 4, -13, 2, 4); r(colors.accent, 8, -13, 2, 3);
     r(fur, -10, -8 + (moving ? Math.sin(stride * 2) : 0), 4, 2); r(light, -11, -10, 2, 3);
     if (!wolf) { r(color, 4, -5, 6, 2); r('#efcf77', 8, -3, 1, 2); }
   }

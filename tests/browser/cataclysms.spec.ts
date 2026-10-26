@@ -89,7 +89,7 @@ test('a toolbar click starts an autonomous tornado that survives mouse release, 
   await page.getByRole('button', { name: 'Blood tornado', exact: true }).click();
   await expect(page.locator('#tool-hint')).toContainText('roams on its own');
   await page.mouse.click(box.x + points[0].x, box.y + points[0].y);
-  await page.keyboard.press('2');
+  await page.keyboard.press('Space');
   await page.mouse.move(box.x + points[1].x, box.y + points[1].y, { steps: 10 });
   await expect.poll(async () => {
     const t = state(await readSave())?.tornadoes[0];
@@ -100,14 +100,14 @@ test('a toolbar click starts an autonomous tornado that survives mouse release, 
   await expect(page.locator('#tool-hint')).toContainText('single point');
   await page.mouse.click(box.x + points[2].x, box.y + points[2].y);
   await expect.poll(async () => (await readSave()).entities.filter(e => e.components.person).length, { timeout: 15000 }).toBe(0);
-  await page.keyboard.press('1');
+  await page.keyboard.press('Space');
   await expect.poll(async () => (await readSave()).paused).toBe(true);
   const tornadoes = state(await readSave())!.tornadoes;
   expect(tornadoes).toHaveLength(1); expect(tornadoes[0].released).toBeNull();
   await page.reload(); await expect(page.locator('#loading-screen')).toBeHidden();
   expect(state(await readSave())!.tornadoes).toEqual(tornadoes);
   expect((await readSave()).entities.filter(e => e.components.person)).toHaveLength(0);
-  await page.keyboard.press('4');
+  await page.locator('#speed-picker').click(); await page.locator('[data-speed="4"]').click();
   await expect.poll(async () => state(await readSave())?.tornadoes.length, { timeout: 15000 }).toBe(0);
   expect(errors).toEqual([]);
 });

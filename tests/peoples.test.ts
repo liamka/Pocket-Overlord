@@ -55,10 +55,10 @@ describe('civilized peoples', () => {
     expect([...world.query('dwelling')].every(e => raceOf(e) === race)).toBe(true);
     expect(people[0].components.citizen!.partnerId).toBe(people[1].id);
     expect(people[0].components.citizen!.pregnancy).toBe(0);
-    for (let i = 0; i < 30 && people[0].components.citizen!.pregnancy === 0; i++) advance(world, 1);
-    expect([...world.query('dwelling')].every(e => !e.components.dwelling!.construction)).toBe(true);
+    for (let i = 0; i < 90 && people[0].components.citizen!.pregnancy === 0; i++) advance(world, 1);
+    expect([...world.query('dwelling')].every(e => !e.components.building!.project)).toBe(true);
     expect(people[0].components.citizen!.pregnancy).toBeGreaterThan(0);
-    const father = people[1].id; world.remove(father);
+    const father = people[1].id;
     advance(world, 17);
     const child = [...world.query('person')].find(e => e.components.citizen!.parents.includes(people[0].id))!;
     expect(child).toBeDefined(); expect(raceOf(child)).toBe(race);

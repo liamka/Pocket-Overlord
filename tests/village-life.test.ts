@@ -1,3 +1,5 @@
+import { operational } from '../src/core/buildings';
+import { deposit, withdraw } from '../src/core/resource-ledger';
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/world';
 import { economyOf, governmentOf, recordService } from '../src/core/village-life';
@@ -84,7 +86,7 @@ describe('livestock and companions', () => {
 });
 
 describe('village production and markets', () => {
-  it('processes grain into flour and bread, carrying each batch before stocking the market', () => {
+  it('processes grain into flour and bread, carrying each batch before stocking the nearest suitable storage', () => {
     const { world, village, people } = settlement(), worker = people[0];
     const market = world.spawn('core:market', { x: 16, y: 28 })!, mill = world.spawn('core:mill', { x: 28, y: 28 })!, bakery = world.spawn('core:bakery', { x: 34, y: 28 })!;
     for (const e of [market, mill, bakery]) e.components.workplace!.villageId = village.id;
@@ -98,7 +100,8 @@ describe('village production and markets', () => {
     expect(worker.components.citizen!.work!.cargo!.good).toBe('flour');
     const saved = decodeSave(world.snapshot(), world.registry), restored = new World(saved.seed, world.registry, saved);
     expect(restored.entities.get(worker.id)!.components.citizen!.work).toEqual(worker.components.citizen!.work);
-    place(world, worker, 17.8, 28); worker.components.citizen!.path = []; continueVillageWork(world, worker);
+    expect(worker.components.citizen!.targetId).toBe(mill.id);
+    place(world, worker, 26.2, 28); worker.components.citizen!.path = []; continueVillageWork(world, worker);
     expect(stocks.flour).toBe(2); expect(economyOf(village).deliveries).toBe(1);
     expect(assignVillageWork(world, worker)).toBe(true);
     expect(worker.components.citizen!.targetId).toBe(bakery.id);
@@ -116,6 +119,7 @@ describe('village production and markets', () => {
     const market = world.spawn('core:market', { x: 16, y: 28 })!, workshop = world.spawn('core:workshop', { x: 34, y: 28 })!;
     for (const e of [market, workshop]) e.components.workplace!.villageId = village.id;
     const tree = world.spawn('core:tree', { x: 20, y: 30 })!;
+    economyOf(village).forestPolicy = 'intensive';
     expect(assignVillageWork(world, worker)).toBe(true);
     place(world, worker, 20, 28.3); worker.components.citizen!.path = [];
     for (let i = 0; i < 8; i++) continueVillageWork(world, worker);
@@ -128,16 +132,17 @@ describe('village production and markets', () => {
     const replacement = world.spawn('core:market', { x: 16, y: 28 })!; replacement.components.workplace!.villageId = village.id;
     expect(assignVillageWork(world, worker)).toBe(true);
     place(world, worker, 17.8, 28); worker.components.citizen!.path = []; continueVillageWork(world, worker);
-    expect(economyOf(village).stocks.wood).toBe(3);
+    expect(economyOf(village).stocks.wood).toBe(5);
+    deposit(village, { wood: 2 }); // Four units remain protected for housing after production.
     expect(assignVillageWork(world, worker)).toBe(true);
     place(world, worker, 32.3, 28); worker.components.citizen!.path = [];
     for (let i = 0; i < 8; i++) continueVillageWork(world, worker);
     place(world, worker, 17.8, 28); worker.components.citizen!.path = []; continueVillageWork(world, worker);
-    expect(economyOf(village).stocks.tools).toBe(2); expect(economyOf(village).stocks.wood).toBe(0);
+    expect(economyOf(village).stocks.tools).toBe(2); expect(economyOf(village).stocks.wood).toBe(4);
     const farm = world.spawn('core:farm', { x: 20, y: 32 })!; farm.components.farm!.villageId = village.id;
     Object.assign(worker.components.citizen!, { task: 'farm', targetId: farm.id }); place(world, worker, 20, 30.3);
     world.tick = 30; agriculture(world); const equippedGrowth = farm.components.farm!.growth;
-    farm.components.farm!.growth = 0; economyOf(village).stocks.tools = 0; agriculture(world);
+    farm.components.farm!.growth = 0; withdraw(village, { tools: economyOf(village).stocks.tools }); agriculture(world);
     expect(equippedGrowth).toBeGreaterThan(farm.components.farm!.growth);
   });
 
@@ -151,7 +156,7 @@ describe('village production and markets', () => {
       if (world.tick % 15 === 0) { worker.components.citizen!.reconsiderIn -= 0.5; continueVillageWork(world, worker); }
     }
     expect(economyOf(village).deliveries).toBe(1);
-    expect(Math.hypot(worker.components.position!.x - 14, worker.components.position!.y - 28)).toBeLessThanOrEqual(2.1);
+    expect(Math.hypot(worker.components.position!.x - mill.components.position!.x, worker.components.position!.y - mill.components.position!.y)).toBeLessThanOrEqual(2.1);
   });
 
   it('finishes the route before working across an obstacle and releases labor when stores are full', () => {
@@ -163,28 +168,32 @@ describe('village production and markets', () => {
     for (let i = 0; i < 10; i++) continueVillageWork(world, worker);
     expect(worker.components.citizen!.work!.cargo).toBeNull(); expect(economyOf(village).stocks.grain).toBe(2);
     worker.components.citizen!.work!.cargo = { good: 'wood', amount: 3, villageId: village.id };
-    worker.components.citizen!.task = 'idle'; economyOf(village).stocks.wood = 2000;
+    worker.components.citizen!.task = 'idle'; deposit(village, { wood: 2000 });
     expect(assignVillageWork(world, worker)).toBe(false);
     expect(worker.components.citizen!.work!.cargo!.amount).toBe(3);
   });
 
-  it('removes abandoned workplaces and clears animal ownership before the next save', () => {
+  it('preserves abandoned workplaces and clears ownership before the next save', () => {
     const { world, village, people, home } = settlement();
     world.tick = 900; economy(world); husbandry(world, STEP); governance(world);
     for (const person of people) world.remove(person.id);
     world.remove(home.id);
     world.tick = 929; world.step();
     expect(world.society.villages.some(v => v.id === village.id)).toBe(false);
-    expect([...world.query('workplace')]).toHaveLength(0);
+    const workplaces = [...world.query('workplace')];
+    expect(workplaces).toHaveLength(1);
+    expect(workplaces[0].components.workplace!.villageId).toBeNull();
+    expect(workplaces[0].components.building!.project).toBeDefined();
     expect([...world.query('animal')].every(e => e.components.animal!.villageId === null && e.components.animal!.ownerId === null)).toBe(true);
     expect(() => decodeSave(world.snapshot(), world.registry)).not.toThrow();
   });
 
   it('develops all workplaces autonomously, continues after reload, and freezes when paused', () => {
     const { world, village } = settlement();
-    for (const x of [12, 16, 32, 36]) world.spawn('core:tree', { x, y: 32 });
-    advance(world, 90);
-    expect([...world.query('workplace')].map(e => e.components.workplace!.kind).sort()).toEqual(['bakery', 'market', 'mill', 'workshop']);
+    for (const y of [32, 36]) for (const x of [8, 12, 16, 28, 32, 36]) world.spawn('core:tree', { x, y });
+    for (const x of [12, 20, 28]) world.spawn('core:stone', { x, y: 40 });
+    advance(world, 180);
+    expect([...world.query('workplace')].filter(operational).map(e => e.components.workplace!.kind).sort()).toEqual(['bakery', 'market', 'mill', 'workshop']);
     expect(village.economy!.deliveries).toBeGreaterThan(0);
     expect(village.government!.leaderId).not.toBeNull();
     expect([...world.query('animal')].length).toBeGreaterThanOrEqual(3);

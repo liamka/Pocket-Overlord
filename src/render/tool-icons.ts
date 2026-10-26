@@ -413,8 +413,17 @@ const volcano: Paint = p => {
   p.line([[11,37],[16,30],[17,28]],'#b1aa8b'); p.line([[33,34],[36,38],[39,39]],'#363f38',2);
 };
 
+const eraser: Paint = p => {
+  p.poly([[7,29],[25,7],[31,7],[43,19],[43,24],[25,42],[18,42],[7,33]],C.redDark);
+  p.poly([[9,29],[26,10],[30,10],[40,20],[22,39],[18,39],[9,32]],'#e89b9b');
+  p.poly([[9,29],[18,20],[31,32],[24,39],[18,39],[9,32]],C.silver);
+  p.line([[11,29],[18,22],[28,32]],C.white,2);
+  p.line([[22,18],[28,12],[36,20]],'#ffd4c3',2);
+  p.rect(29,39,11,2,C.metal); p.rect(8,41,4,2,C.silver); p.rect(5,37,2,2,'#e89b9b');
+};
+
 const paintings: Readonly<Record<string, Paint>> = {
-  'core:raise-land':raise,'core:lower-land':lower,
+  'core:raise-land':raise,'core:lower-land':lower,'core:erase-objects':eraser,
   ...Object.fromEntries(['grassland','savanna','desert','jungle','swamp','permafrost'].map(kind=>[`core:biome-${kind}`,biome(kind)])),
   ...Object.fromEntries(FANTASY_BIOMES.map(definition => [`core:biome-${definition.key}`, fantasyBiome(definition)])),
   ...Object.fromEntries(['human','elf','orc','dwarf'].map(race=>[`core:${race}`,portrait(race)])),

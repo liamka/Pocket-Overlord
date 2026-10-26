@@ -1,3 +1,9 @@
+import { lawEnabled } from '../core/world-rules';
+import { hasTrait } from '../core/traits';
+import { isAdult } from '../core/unit-stats';
+import { recordHappiness } from '../core/happiness';
+import { takeFood } from '../core/resource-ledger';
+import { professionOf } from '../core/jobs';
 import type { World } from '../core/world';
 import { raceAffinity } from '../core/races';
 import { roadIsIntact } from '../core/roads';
@@ -11,7 +17,7 @@ export function atWar(world: World, a: number | null, b: number | null): boolean
   return a !== null && b !== null && a !== b && world.society.wars.some(war => opposingSides(war, a, b));
 }
 const livingAdults = (world: World, members: number[]): Entity[] => [...world.query('person', 'citizen')]
-  .filter(e => e.components.person!.age >= 18 && e.components.citizen!.task !== 'migrate' && members.includes(e.components.citizen!.villageId ?? -1));
+  .filter(e => isAdult(e) && e.components.citizen!.task !== 'migrate' && members.includes(e.components.citizen!.villageId ?? -1));
 const participants = (war: War): number[] => [...war.attackers, ...war.defenders];
 const activeWar = (world: World, id: number): War | undefined => world.society.wars.find(w => participants(w).includes(id));
 
@@ -31,11 +37,14 @@ function setWarRelations(world: World, war: War): void {
 }
 
 function prepareReinforcements(world: World, members: number[]): void {
+  if (!lawEnabled(world, 'armies')) return;
   resetOrders(world, members);
   for (const e of livingAdults(world, members)) {
-    if (e.id % 3 === 0) continue; // Part of the population keeps producing food.
+    const role = professionOf(world, e);
+    if (role.service === 'civilian') continue;
     const c = e.components.citizen!, village = world.society.villages.find(v => v.id === c.villageId)!;
-    if (village.food >= 1) { village.food--; c.hunger = Math.max(0, c.hunger - 35); }
+    c.profession = role;
+    if (village.food >= 1) { takeFood(village, 1); c.hunger = Math.max(0, c.hunger - 35); }
   }
 }
 
@@ -44,7 +53,7 @@ function compatibleSide(world: World, members: number[]): boolean {
 }
 
 export function formAlliance(world: World, a: number, b: number): boolean {
-  if (a === b || !world.society.villages.some(v => v.id === a) || !world.society.villages.some(v => v.id === b)) return false;
+  if (!lawEnabled(world, 'diplomacy') || a === b || !world.society.villages.some(v => v.id === a) || !world.society.villages.some(v => v.id === b)) return false;
   const left = alliedGroup(world.society, a), right = alliedGroup(world.society, b);
   if (left.includes(b)) return false;
   const merged = [...new Set([...left, ...right])].sort((x, y) => x - y);
@@ -72,6 +81,7 @@ export function formAlliance(world: World, a: number, b: number): boolean {
 }
 
 export function leaveAlliance(world: World, id: number): boolean {
+  if (!lawEnabled(world, 'diplomacy')) return false;
   if (activeWar(world, id)) return false;
   const group = alliedGroup(world.society, id);
   if (group.length < 2) return false;
@@ -113,6 +123,9 @@ function chooseObjectives(world: World, war: War): void {
 }
 
 export function declareWar(world: World, a: number, b: number): War | undefined {
+  if (!lawEnabled(world, 'diplomacy')) return;
+  const leader = world.entities.get(world.society.villages.find(v => v.id === a)?.government?.leaderId ?? -1);
+  if (leader && hasTrait(leader,'pacifist')) return;
   if (a === b || !world.society.villages.some(v => v.id === a) || !world.society.villages.some(v => v.id === b)) return;
   const attackers = alliedGroup(world.society, a), defenders = alliedGroup(world.society, b);
   if (attackers.includes(b) || !connected(world, attackers, defenders)) return;
@@ -147,6 +160,8 @@ export function declareWar(world: World, a: number, b: number): War | undefined 
 export function endWar(world: World, war: War, reason: string): void {
   if (!world.society.wars.some(w => w.id === war.id)) return;
   recordWarOutcome(world, war);
+  // Current campaigns end in a truce; casualties alone do not establish a victory.
+  for (const entity of world.query('citizen')) if (participants(war).includes(entity.components.citizen!.villageId ?? -1)) recordHappiness(world, entity, 'peace');
   world.society.wars = world.society.wars.filter(w => w.id !== war.id);
   for (const r of world.society.relations) if (opposingSides(war, r.a, r.b) && !atWar(world, r.a, r.b)) {
     r.status = 'neutral'; r.affinity = -5; r.since = world.tick; r.nextDecision = world.tick + 1800 / SOCIAL_EVENT_RATE;
@@ -187,6 +202,7 @@ export function campaignObjective(world: World, villageId: number): number | und
 export function diplomacy(world: World): void {
   if (world.tick % 30 !== 0) return;
   campaigns(world);
+  if (!lawEnabled(world, 'diplomacy')) return;
   const counts = new Map<number, number>();
   for (const e of world.query('citizen')) {
     const id = e.components.citizen!.villageId;

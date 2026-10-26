@@ -1,3 +1,4 @@
+import { isAdult } from '../core/unit-stats';
 import type { Entity, Vec2, VisualEvent } from '../core/types';
 import type { World } from '../core/world';
 
@@ -37,7 +38,7 @@ export class StatusBubbles {
 
   icon(entity: Entity): StatusIcon | undefined {
     const { person, citizen, thermal } = entity.components;
-    if (!person || person.age < 18 || !citizen) return;
+    if (!person || !isAdult(entity) || !citizen) return;
     if (citizen.task === 'fight' && citizen.villageId !== null && this.warringVillages.has(citizen.villageId)) return 'weapon';
     if (!thermal?.burning && this.hearts.has(entity.id)) return 'heart';
   }

@@ -7,20 +7,46 @@ export function ferryPosition(world: World, road: Road, ferry: Ferry): Vec2 {
   return { x: a.x + (b.x - a.x) * ferry.progress, y: a.y + (b.y - a.y) * ferry.progress };
 }
 export function ferryAvailable(world: World, road: Road, ferry: Ferry): boolean {
-  if (road.built <= ferry.end) return false;
+  if (road.built < ferry.end) return false;
   for (const n of [ferry.start, ferry.end]) {
     const p = tilePoint(world, road.tiles[n]);
     if (!world.terrain.isLand(p.x, p.y) || world.terrain.at(p.x, p.y) === Terrain.Mountain
       || world.nearby(p, 1.5).some(e => e.components.solid && Math.hypot(e.components.position!.x - p.x, e.components.position!.y - p.y) < e.components.solid.radius + 0.25)) return false;
   }
-  return road.tiles.slice(ferry.start + 1, ferry.end).every(i => world.terrain.tiles[i] < Terrain.Sand);
+  return road.tiles.slice(ferry.start + 1, ferry.end).every(i => world.terrain.isOpenWater(i % world.terrain.width, Math.floor(i / world.terrain.width)));
 }
 export function* ferryRoutes(world: World): Generator<{ road: Road; ferry: Ferry }> {
   for (const road of world.society.roads) for (const ferry of road.ferries ?? []) yield { road, ferry };
 }
 export function aboardFerry(world: World, id: number): boolean {
-  for (const { ferry } of ferryRoutes(world)) if (ferry.passengers.includes(id)) return true;
+  for (const road of world.society.roads) for (const ferry of road.ferries ?? []) if (ferry.passengers.includes(id)) return true;
   return false;
+}
+/** Terrain edits release an invalid boat's seats at the actual position, synchronously. */
+export function releaseUnavailableFerries(world: World): void {
+  for (const { road, ferry } of ferryRoutes(world)) if (ferry.passengers.length && !ferryAvailable(world, road, ferry)) {
+    for (const id of ferry.passengers) {
+      const c = world.entities.get(id)?.components;
+      if (c?.citizen) { c.citizen.path = []; c.citizen.reconsiderIn = 0; }
+      if (c?.caravan) { c.caravan.reroute = true; c.caravan.retryIn = 0; }
+    }
+    ferry.passengers = [];
+  }
+}
+/** Cancel boarding at the bank. A traveler already at sea keeps the seat until safe landing. */
+export function cancelFerryBoarding(world: World, entity: Entity): boolean {
+  const c = entity.components.citizen;
+  if (c) { c.path = []; c.reconsiderIn = 0; }
+  for (const { road, ferry } of ferryRoutes(world)) {
+    if (!ferry.passengers.includes(entity.id)) continue;
+    if (ferry.progress !== 0 && ferry.progress !== 1) return false;
+    const bank = tilePoint(world, road.tiles[ferry.progress === 0 ? ferry.start : ferry.end]);
+    const landing = world.findFreePosition(bank, 0.17);
+    if (!landing) return false;
+    Object.assign(entity.components.position!, landing); world.spatial.update(entity);
+    ferry.passengers = ferry.passengers.filter(id => id !== entity.id);
+  }
+  return true;
 }
 export function ferryLink(world: World, from: Vec2, to: Vec2): { road: Road; ferry: Ferry; side: 0 | 1 } | undefined {
   const first = world.terrain.index(from.x, from.y), last = world.terrain.index(to.x, to.y);

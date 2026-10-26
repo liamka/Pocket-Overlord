@@ -1,27 +1,46 @@
+import type { Wallet, MoneyEntry } from './currency';
+import type { SubspeciesMember, SubspeciesState } from './subspecies-state';
+import type { TraitState } from './traits';
+import type { UnitStats } from './unit-stats';
+import type { StatusState } from './status-effects';
+import type { HappinessState } from './happiness';
+import type { EquipmentState } from './equipment';
+import type { FamilyState, Kinship } from './families';
+import type { DamageContext, DeathState } from './death';
+import type { BehaviourState } from './behaviour';
+import type { JobAssignment, JobProblem, Profession } from './jobs';
+import type { NeuronState } from './neurons';
+import type { CraftingState } from './crafting';
 import type { RaceId } from './races';
+import type { ResourceBundle } from './resources';
 import type { Integration, ResidentWork, VillageEconomy, VillageGovernment } from './village-life';
 
 export interface Vec2 { x: number; y: number }
 export interface WorldViewport { left: number; top: number; right: number; bottom: number }
 export interface ToolControl { x: number; y: number; attacking: boolean; active: boolean }
 export interface ResidentAnimation { stride: number; moving: number; heading: number; work: number }
-export interface Construction { progress: number; struckAt: number; upgrade?: boolean }
 export interface Emergency { kind: 'flee' | 'extinguish' | 'aid'; targetId: number | null; path: Vec2[]; reconsiderIn: number }
 export interface Plague { age: number; spreadIn: number }
 export interface Madness { age: number }
 
 export interface CoreComponents {
+  subspecies: SubspeciesMember;
+  stats: UnitStats;
+  traits: TraitState;
+  statuses: StatusState;
+  happiness: HappinessState;
+  kinship: Kinship;
   position: Vec2;
   health: { current: number; max: number };
   combustible: { fuel: number; ignition: number };
-  thermal: { temperature: number; wetness: number; burning: boolean };
+  thermal: { temperature: number; wetness: number; burning: boolean; ignition?: DamageContext; lastChange?: import('./temperature').ThermalChange };
   motion: { vx: number; vy: number; speed: number; heading: number; decisionIn: number };
   person: { race?: RaceId; age: number; sex: 'a' | 'b'; homeId: number | null; buildIn: number; reproduceIn: number; animation?: ResidentAnimation; displaced?: { homeId: number; since: number }; plague?: Plague; madness?: Madness };
-  citizen: { villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'socialize' | 'fight' | 'repair' | 'build' | 'migrate' | 'work' | 'deliver' | 'tend' | 'guard' | 'equip'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency; work?: ResidentWork; weapon?: 'stone-axe'; service?: number; integration?: Integration };
-  dwelling: { race?: RaceId; level?: 2; capacity: number; villageId: number | null; construction?: Construction };
+  citizen: { wallet?: Wallet; profession?: Profession; jobAssignment?: JobAssignment; jobProblem?: JobProblem; villageId: number | null; partnerId: number | null; parents: number[]; hunger: number; pregnancy: number; fatherId: number | null; task: 'idle' | 'farm' | 'eat' | 'visit' | 'socialize' | 'fight' | 'repair' | 'build' | 'migrate' | 'work' | 'deliver' | 'tend' | 'guard' | 'equip'; targetId: number | null; path: Vec2[]; reconsiderIn: number; attackIn: number; repair: { tile: number; remaining: number } | null; emergency?: Emergency; work?: ResidentWork; weapon?: 'stone-axe'; service?: number; integration?: Integration; behaviour?: BehaviourState; neurons?: NeuronState; reflectionAfter?: number; familyActionAt?: number; conversation?: { partnerId: number; startedAt: number; contact: number } };
+  dwelling: { race?: RaceId; level?: 2; capacity: number; villageId: number | null };
   ruin: { race: RaceId; villageId: number | null; homeId: number; capacity: number; destroyedAt: number };
-  farm: { villageId: number; growth: number; harvests: number; grain?: number };
-  caravan: { fromId: number; toId: number | null; food: number; path: Vec2[]; next: number; returning: boolean; retryIn: number };
+  farm: { villageId: number | null; growth: number; harvests: number; grain?: number };
+  caravan: { fromId: number; toId: number | null; food: number; foodGoods?: ResourceBundle; gems?: number; path: Vec2[]; next: number; returning: boolean; retryIn: number; reroute?: boolean };
   solid: { radius: number };
   explosive: { fuse: number; radius: number; power: number; heat: number };
   projectile: { remaining: number; duration: number; heading?: number };
@@ -33,7 +52,7 @@ export type ComponentKey = keyof ComponentMap;
 export type Components = { [K in ComponentKey]?: ComponentMap[K] };
 export interface Entity { id: number; typeId: string; components: Components }
 
-export enum Terrain { DeepWater, Water, Sand, Grass, Scorched, Crater, Road, Mountain, BridgeHorizontal, BridgeVertical }
+export enum Terrain { DeepWater, Water, Sand, Grass, Scorched, Crater, Road, Mountain, BridgeHorizontal, BridgeVertical, PitShallow, PitClose, PitDeep, Hill, Summit }
 export const isBridge = (tile: number): boolean => tile === Terrain.BridgeHorizontal || tile === Terrain.BridgeVertical;
 export const isRoadSurface = (tile: number): boolean => tile === Terrain.Road || isBridge(tile);
 export const MAX_BRIDGE_SPAN = 3;
@@ -43,16 +62,17 @@ export const ROAD_OVERGROWTH_SECONDS = 480;
 export const WORLD_WIDTH = 512;
 export const WORLD_HEIGHT = 384;
 export interface TerrainRecovery { index: number; age: number; target: Terrain.Sand | Terrain.Grass }
-export interface RoadWear { index: number; age: number; target: Terrain.Sand | Terrain.Grass }
-export interface TerrainData { width: number; height: number; tiles: number[]; moisture: number[]; recovery: TerrainRecovery[]; roadWear?: RoadWear[]; biomes?: number[]; surfaces?: number[] }
+export interface RoadWear { index: number; age: number; target: Terrain.Sand | Terrain.Grass | Terrain.Water | Terrain.DeepWater; waterDepth?: 1 | 2 | 3 }
+export interface TerrainData { width: number; height: number; tiles: number[]; moisture: number[]; recovery: TerrainRecovery[]; roadWear?: RoadWear[]; biomes?: number[]; surfaces?: number[]; layers?: import('./tiles').TileLayers[]; visualSeed?: number }
 /** Content modules may augment this interface alongside their event handler. */
 export interface GameEventMap {
-  blast: { x: number; y: number; radius: number; power: number; heat: number; style?: 'napalm' | 'rocket' | 'dynamite' };
-  damage: { target: number; amount: number };
-  heat: { target: number; amount: number };
+  blast: { x: number; y: number; radius: number; power: number; heat: number; style?: 'napalm' | 'rocket' | 'dynamite' } & Partial<DamageContext>;
+  damage: { target: number; amount: number; thermalShock?: true } & Partial<DamageContext>;
+  heat: { target: number; amount: number } & Partial<DamageContext>;
+  'tile-heat': { x: number; y: number; radius: number; amount: number } & Partial<DamageContext>;
   wet: { target: number; amount: number };
   impulse: { target: number; x: number; y: number };
-  surface: { x: number; y: number; radius: number; terrain: Terrain };
+  surface: { x: number; y: number; radius: number; terrain: Terrain; origin?: import('./world-rules').TerrainAction };
 }
 export type EventKind = keyof GameEventMap;
 export type GameEvent<K extends EventKind = EventKind> = { [P in K]: { kind: P } & GameEventMap[P] }[K];
@@ -61,12 +81,12 @@ export type LandChange = { x: number; y: number; from: Terrain; to: Terrain };
 export type LandEdit = Vec2 & { kind: 'terraform'; radius: number; mode: 'raise' | 'lower'; tiles: LandChange[] };
 export type VisualEvent = Vec2 & { radius: number } & (
   | { kind: 'blast'; style?: 'napalm' | 'rocket' | 'dynamite' }
-  | { kind: 'birth' | 'build' }
+  | { kind: 'birth' | 'build' | 'fireworks' }
   | { kind: 'collapse'; house: Entity; tick: number }
   | { kind: 'love'; target: number }
   | LandEdit
 );
-export const SIMULATION_SPEEDS = [0.2, 1, 2, 4, 10, 40] as const;
+export const SIMULATION_SPEEDS = [0.2, 1, 2, 4, 10, 20] as const;
 export type SimulationSpeed = typeof SIMULATION_SPEEDS[number];
 export const isSimulationSpeed = (value: unknown): value is SimulationSpeed => SIMULATION_SPEEDS.some(speed => speed === value);
 export const speedLabel = (speed: SimulationSpeed): string => speed === 0.2 ? '⅕×' : `${speed}×`;
@@ -79,6 +99,9 @@ export type GameCommand =
   | { kind: 'speed'; speed: 0 | SimulationSpeed }
   | { kind: 'pause'; paused: boolean };
 export interface WorldSnapshot {
+  moneyHistory?: MoneyEntry[];
+  worldRules?: import('./world-rules').WorldRules;
+  processes?: import('./world-processes').WorldProcesses;
   version: number;
   seed: number;
   rngState: number;
@@ -91,19 +114,25 @@ export interface WorldSnapshot {
   effects: RainEffect[];
   events: GameEvent[];
   society: Society;
+  subspecies?: SubspeciesState;
+  equipment?: EquipmentState;
+  crafting?: CraftingState;
+  unitHistory?: import('./units').UnitMemory[];
+  families?: FamilyState;
+  deaths?: DeathState;
   contentPacks: string[];
   scenarios: { id: string; state: import('./validation').JsonValue }[];
 }
-export interface Village extends Vec2 { id: number; race?: RaceId; name: string; food: number; harvested: number; founded: number; migrationAfter: number; economy?: VillageEconomy; government?: VillageGovernment; livestock?: { established: boolean; threatAfter: number } }
+export interface Village extends Vec2 { id: number; race?: RaceId; name: string; food: number; harvested: number; founded: number; migrationAfter: number; economy?: VillageEconomy; government?: VillageGovernment; livestock?: { established: boolean; threatAfter: number }; territory?: import('./territory').VillageTerritory; roadPlan?: { after: number; cursor: number; problem: import('./roads').RoadProblem }; constructionProfile?: import('./village-development').ConstructionProfile }
 export interface Migration {
   id: number; fromId: number; toId: number | null; destination: Vec2;
-  members: number[]; homeIds: number[]; food: number; started: number;
+  members: number[]; homeIds: number[]; food: number; foodGoods?: ResourceBundle; started: number; familyIds?: number[]; reservedZones?: number[];
 }
 export interface Relation { a: number; b: number; status: 'neutral' | 'alliance' | 'war'; affinity: number; since: number; nextDecision: number; roadAttempt: number }
 export interface BridgeDeck { tile: number; terrain: Terrain.BridgeHorizontal | Terrain.BridgeVertical }
 /** Endpoints are offsets into the owning road; progress runs from the first bank to the second. */
 export interface Ferry { start: number; end: number; progress: number; target: 0 | 1; wait: number; passengers: number[] }
-export interface Road { a: number; b: number; tiles: number[]; built: number; bridges?: BridgeDeck[]; ferries?: Ferry[] }
+export interface Road { a: number; b: number; tiles: number[]; built: number; bridges?: BridgeDeck[]; ferries?: Ferry[]; buildings?: [number, number] }
 export interface War {
   id: number; attackers: number[]; defenders: number[]; started: number; musterUntil: number;
   attackTarget: number; rallyVillage: number; initialAttackers: number; initialDefenders: number; lossesAttackers: number; lossesDefenders: number;
@@ -118,4 +147,4 @@ export const POPULATION_LIMIT = 300;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;
-export const SAVE_VERSION = 32;
+export const SAVE_VERSION = 72;
