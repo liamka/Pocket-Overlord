@@ -1,5 +1,12 @@
 # Changelog
 
+- [#306] Restrict temperature brushes, cloud tools, temples, mines and cell inspection to debug mode.
+- [#305] Update the itch.io game automatically with each release and allow retrying a failed upload without creating a new version.
+- [#304] Add a local gallery of ten illustrated header concepts and an ocean background for the game's itch.io page.
+- [#303] Restrict the fruit plants tool to debug mode.
+- [#302] Make Z and X smoothly zoom the camera while held, stopping on release or loss of focus.
+- [#301] Require a separate changeset for every project change in the project agent rules.
+- [#300] Add layout-independent Z and X keyboard shortcuts to zoom the camera in and out.
 - [#299] Rename the game to Pocket Overlord.
 - [#298] Add seven fantasy biomes with distinct vegetation, terrain, seed brushes and localized world selection.
 - [#297] Show population counts for each race in the world overview.
