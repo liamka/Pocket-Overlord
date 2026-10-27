@@ -23,7 +23,9 @@ describe('world and command boundary', () => {
     expect(world.command({ kind: 'use-tool', toolId: 'core:human', x: 20, y: 20 })).toBeUndefined();
     expect(world.command({ kind: 'use-tool', toolId: 'core:human', x: 20, y: 20 })).toBeUndefined();
     for (let i = 0; i < POPULATION_LIMIT + 10; i++) world.spawn('core:person', { x: 10, y: 10 });
-    expect(world.population).toBe(POPULATION_LIMIT);
+    expect(world.population).toBe(3000);
+    const saved = decodeSave(world.snapshot(), world.registry);
+    expect(new World(saved.seed, world.registry, saved).population).toBe(3000);
     for (const race of ['human', 'elf', 'orc', 'dwarf']) {
       expect(world.registry.tools.get(`core:${race}`)!.canApply!(world, { x: 35, y: 35 })).toBe(false);
     }

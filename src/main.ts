@@ -76,7 +76,7 @@ const togglePause = (): void => {
   if (!ready) return;
   world.command({ kind: 'pause', paused: !world.paused }); clock.reset(); updateUI();
 };
-const dispatch = (command: GameCommand): void => {
+const dispatch = (command: GameCommand): boolean | void => {
   if (command.kind === 'use-tool' && command.toolId === 'core:inspect-tile') {
     ui.tileInspector.open(world, command); updateUI(); return;
   }
@@ -90,6 +90,7 @@ const dispatch = (command: GameCommand): void => {
     && world.terrain.inside(command.x, command.y)
     && registry.tools.get(command.toolId)?.canApply?.(world, command) !== false
     ? world.snapshot(world.terrain.snapshot(undoTerrain)) : undefined;
+  const previousEntityId = world.nextEntityId;
   const message = world.command(command);
   if (before) {
     const { terrain, ...state } = before, checkpoint = JSON.stringify(state);
@@ -114,6 +115,7 @@ const dispatch = (command: GameCommand): void => {
   if (command.kind === 'speed' || command.kind === 'pause') clock.reset();
   if (message) ui.toast(message);
   updateUI();
+  return world.nextEntityId !== previousEntityId;
 };
 const stepSpeed = (direction: -1 | 1): void => {
   const speed = SIMULATION_SPEEDS[SIMULATION_SPEEDS.indexOf(world.speed) + direction];

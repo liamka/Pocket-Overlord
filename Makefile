@@ -1,5 +1,4 @@
 # Run make release to consume pending changesets and publish to GitHub and itch.io.
-# Commit project changes and their changesets before releasing.
 
 .PHONY: help build test dist release release-itch
 
@@ -21,6 +20,9 @@ dist:
 	node scripts/release.mjs --package
 
 release:
+	git add -A
+	git commit -m "fixes"
+	git push
 	node scripts/release.mjs
 
 release-itch:

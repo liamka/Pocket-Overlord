@@ -88,6 +88,7 @@ export class Renderer {
   private readonly statusSprites: Record<StatusIcon, HTMLCanvasElement>;
   private readonly cloudSprites: HTMLCanvasElement[];
   cursor: Vec2 | undefined;
+  placementCount: number | undefined;
   tool: ToolDefinition | undefined;
   frameMs = 0;
   constructor(readonly canvas: HTMLCanvasElement, private readonly debugMode = false) {
@@ -678,6 +679,12 @@ export class Renderer {
         ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
       }
       ctx.fillStyle = valid ? this.tool.color : '#ed9c8c'; ctx.fillRect(x * TILE - 1, y * TILE - 1, 2, 2);
+      if (this.placementCount !== undefined) {
+        ctx.save(); ctx.translate(x * TILE, y * TILE); ctx.scale(1 / camera.zoom, 1 / camera.zoom);
+        ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left'; ctx.lineWidth = 3;
+        ctx.strokeStyle = '#000'; ctx.strokeText(String(this.placementCount), 10, -10);
+        ctx.fillStyle = '#fff'; ctx.fillText(String(this.placementCount), 10, -10); ctx.restore();
+      }
       const placement = this.debugMode && valid && this.tool.creaturePlacement?.(world, this.cursor);
       if (placement) {
         const speciesId = world.registry.entities.get(placement.typeId)?.speciesId;

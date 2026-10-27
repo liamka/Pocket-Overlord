@@ -45,6 +45,20 @@ test.describe('undo', () => {
     expect(await readSave(page)).toEqual(before);
   });
 
+  test('holding the human tool places several residents as one undoable action', async ({ page }) => {
+    await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
+    const target = point(24, 24);
+    await page.mouse.move(target.x, target.y); await page.mouse.down();
+    await expect(page.locator('#population')).toHaveText('1');
+    await expect.poll(async () => Number(await page.locator('#population').textContent())).toBeGreaterThan(2);
+    await page.mouse.up();
+    const count = await page.locator('#population').textContent();
+    await page.waitForTimeout(150); await expect(page.locator('#population')).toHaveText(count!);
+    await page.locator('#undo').click();
+    await expect(page.locator('#population')).toHaveText('0');
+    await expect(page.locator('#undo')).toBeDisabled();
+  });
+
   test('undoes many actions in order and retains older history after a new action', async ({ page }) => {
     await seed(page); await expect(page.locator('#loading-screen')).toBeHidden();
     await expect(page.locator('#save-status')).toBeHidden();

@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../content/registry';
+import { POPULATION_LIMIT } from '../core/types';
 import type { GameCommand, Vec2 } from '../core/types';
 import type { Renderer } from '../render/renderer';
 
@@ -24,7 +25,7 @@ export interface InputHost {
   tool(): ToolDefinition;
   select(id: string): void;
   tools(): Iterable<ToolDefinition>;
-  dispatch(command: GameCommand): void;
+  dispatch(command: GameCommand): boolean | void;
   beginAction?(): void;
   togglePause(): void;
   stepSpeed(direction: -1 | 1): void;
@@ -39,6 +40,7 @@ export class InputController {
   private panning = false;
   private point: Vec2 | undefined;
   private lastRain = -Infinity;
+  private placementAttempt = 0;
   private lastAim: (Vec2 & { toolId: string }) | undefined;
   private readonly held = new Set<string>();
   private lastUpdate: number | undefined;
@@ -60,7 +62,10 @@ export class InputController {
       canvas.setPointerCapture(event.pointerId);
       this.updatePoint(event);
       if (event.button !== 0) { this.panning = true; canvas.classList.add('panning'); }
-      else if (host.tool().aim || host.tool().paint) { this.apply(); this.gesture.applied = true; }
+      else if (host.tool().aim || host.tool().paint || host.tool().holdPlacement) {
+        if (host.tool().holdPlacement) { renderer.placementCount = 0; this.placementAttempt = 1; }
+        this.apply(); this.gesture.applied = true;
+      }
       this.control();
     });
     canvas.addEventListener('pointermove', event => this.move(event));
@@ -204,6 +209,7 @@ export class InputController {
   private release(releaseCapture = true): void {
     const gesture = this.gesture;
     this.gesture = undefined; this.panning = false;
+    this.renderer.placementCount = undefined;
     if (gesture?.button === 0 && gesture.applied && [...this.host.tools()].some(tool => tool.id === gesture.toolId && tool.release)) {
       this.host.dispatch({ kind: 'release-tool', toolId: gesture.toolId });
       this.lastAim = undefined;
@@ -246,9 +252,9 @@ export class InputController {
     } else if (this.touches.size) return;
     const gesture = this.gesture;
     if (gesture && event.pointerId === gesture.id) {
-      if (!gesture.touch && gesture.button === 0 && !(event.buttons & 1) && this.host.tool().release) { this.release(); this.updatePoint(event); return; }
+      if (!gesture.touch && gesture.button === 0 && !(event.buttons & 1) && (this.host.tool().release || this.host.tool().holdPlacement)) { this.release(); this.updatePoint(event); return; }
       const current = { x: event.clientX, y: event.clientY };
-      const steering = gesture.button === 0 && gesture.toolId === this.host.tool().id && !!(this.host.tool().aim || this.host.tool().paint || gesture.touch && this.host.tool().continuous) && (!gesture.touch || gesture.applied);
+      const steering = gesture.button === 0 && gesture.toolId === this.host.tool().id && !!(this.host.tool().aim || this.host.tool().paint || !gesture.touch && this.host.tool().holdPlacement || gesture.touch && this.host.tool().continuous) && (!gesture.touch || gesture.applied);
       if (!steering && !this.panning && Math.hypot(current.x - gesture.start.x, current.y - gesture.start.y) >= (gesture.touch ? TOUCH_DRAG_THRESHOLD : DRAG_THRESHOLD)) {
         this.panning = true; this.renderer.canvas.classList.add('panning');
       }
@@ -267,14 +273,16 @@ export class InputController {
     this.point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     this.renderer.cursor = this.renderer.camera.screenToWorld(this.point.x, this.point.y);
   }
-  private apply(): void {
-    if (!this.renderer.cursor || this.host.blocked()) return;
+  private apply(): boolean | void {
+    if (!this.renderer.cursor || this.host.blocked()) return false;
     if (!this.gesture?.applied) this.host.beginAction?.();
     if (this.gesture) this.gesture.applied = true;
     const camera = this.renderer.camera;
     const topLeft = camera.screenToWorld(0, 0), bottomRight = camera.screenToWorld(camera.width, camera.height);
-    this.host.dispatch({ kind: 'use-tool', toolId: this.host.tool().id, ...this.renderer.cursor,
+    const placed = this.host.dispatch({ kind: 'use-tool', toolId: this.host.tool().id, ...this.renderer.cursor,
       viewport: { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y } });
+    if (placed && this.renderer.placementCount !== undefined) this.renderer.placementCount++;
+    return placed;
   }
   private aim(): void {
     const tool = this.host.tool(), point = this.renderer.cursor;
@@ -309,6 +317,15 @@ export class InputController {
     if (this.point && this.renderer.cursor) this.renderer.cursor = this.renderer.camera.screenToWorld(this.point.x, this.point.y);
     this.aim();
     const gesture = this.gesture, tool = this.host.tool();
+    if (gesture && !gesture.touch && gesture.button === 0 && !this.panning && tool.id === gesture.toolId && tool.holdPlacement) {
+      // Place every half second, doubling the batch every two seconds.
+      for (let i = 0; i < 100; i++) {
+        if (now - gesture.started < this.placementAttempt * 500) break;
+        const batch = Math.min(POPULATION_LIMIT, 2 ** Math.floor(this.placementAttempt / 4));
+        for (let j = 0; j < batch; j++) if (this.apply() === false) break;
+        this.placementAttempt++;
+      }
+    }
     if (gesture?.touch && !gesture.applied && !this.panning && now - gesture.started >= TOUCH_HOLD_DELAY && (tool.aim || tool.paint || tool.continuous)) {
       this.apply(); gesture.applied = true; this.lastRain = now; this.control(); this.aim();
     }
