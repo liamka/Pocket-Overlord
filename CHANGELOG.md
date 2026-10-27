@@ -1,5 +1,11 @@
 # Changelog
 
+- [#312] Accelerate resident placement the longer the mouse button is held.
+- [#311] Place people continuously while holding the mouse button and show the placement count.
+- [#310] Add Git staging, fixes commit and push to make release.
+- [#309] Increase held resident placement in batches every half second.
+- [#308] Fix failed itch.io uploads of release ZIP archives.
+- [#307] Raise the world resident limit to 3000.
 - [#306] Restrict temperature brushes, cloud tools, temples, mines and cell inspection to debug mode.
 - [#305] Update the itch.io game automatically with each release and allow retrying a failed upload without creating a new version.
 - [#304] Add a local gallery of ten illustrated header concepts and an ocean background for the game's itch.io page.
