@@ -80,7 +80,7 @@ describe('reproduction transactions', () => {
   it('reserves the last population slot and cannot overfill it with twins or player spawns', () => {
     const w = flatWorld(), [a, b] = pair(w), s = subspeciesOf(a)!;
     setReproductionProfile(w, s.id, { ...s.reproduction!, birthRate: 8 });
-    while (w.population < POPULATION_LIMIT - 1) resident(w, 5 + w.population % 30, 5 + Math.floor(w.population / 30));
+    while (w.population < POPULATION_LIMIT - 1) resident(w, 5 + w.population % 30, 5 + Math.floor(w.population / 30) % 30);
     expect(startReproduction(w, a, 'sexual', b)).toBe(true);
     expect(a.components.reproduction!.pending!.children).toHaveLength(1);
     expect(w.spawn('core:person', { x: 40, y: 40 })).toBeUndefined();

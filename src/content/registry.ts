@@ -38,6 +38,8 @@ export interface ToolDefinition {
   showArea?: boolean;
   color: string;
   continuous?: boolean;
+  /** Place residents continuously while the left mouse button is held. */
+  holdPlacement?: boolean;
   /** Left-drag paints the ground; right-drag still pans the camera. */
   paint?: boolean;
   paintHint?: string;

@@ -85,7 +85,8 @@ function checkItch() {
 }
 
 function uploadItch(archive, currentVersion) {
-  run('butler', ['push', archive, itchTarget, '--userversion', currentVersion, '--if-changed']);
+  // butler 15.32.0 treats ZIP paths as directories when --if-changed is used.
+  run('butler', ['push', archive, itchTarget, '--userversion', currentVersion]);
   console.log(`Uploaded ${currentVersion} to https://liamka.itch.io/pocket-overlord (visibility unchanged).`);
 }
 

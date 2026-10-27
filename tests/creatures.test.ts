@@ -122,7 +122,7 @@ describe('species contracts', () => {
 
   it('rejects creature placement beyond bounds and at capacity without consuming IDs or RNG', () => {
     const world = flatWorld();
-    for (let i = 0; i < POPULATION_LIMIT; i++) world.spawn('core:person', { x: 4 + i % 35, y: 4 + Math.floor(i / 35) });
+    for (let i = 0; i < POPULATION_LIMIT; i++) world.spawn('core:person', { x: 4 + i % 35, y: 4 + Math.floor(i / 35) % 35 });
     let state = world.rng.state, next = world.nextEntityId;
     expect(world.spawn('core:person', { x: 20, y: 20 })).toBeUndefined();
     expect(world.rng.state).toBe(state); expect(world.nextEntityId).toBe(next);

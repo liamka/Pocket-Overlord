@@ -143,7 +143,7 @@ export const newSociety = (): Society => ({ nextVillageId: 1, nextWarId: 1, next
 export const STEP = 1 / 30;
 /** Frequency of autonomous social events relative to their original cadence. */
 export const SOCIAL_EVENT_RATE = 0.5;
-export const POPULATION_LIMIT = 300;
+export const POPULATION_LIMIT = 3000;
 export const ENTITY_LIMIT = 6000;
 export const EVENT_BUDGET = 256;
 export const ROAD_REPAIR_SECONDS = 3;

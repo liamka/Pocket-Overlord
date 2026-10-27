@@ -26,7 +26,7 @@ export function registerPeoples(registry: Registry): void {
   for (const race of RACE_IDS) {
     const stats = RACES[race];
     registry.registerEntity({ id: stats.entityId, sprite: 'person', create: (p, rng) => createCivilComponents(race, p, rng) });
-    registry.registerTool({ id: `core:${race}`, category: 'people', icon: race, label: stats.label, hint: hints[race], radius: 0.6,
+    registry.registerTool({ id: `core:${race}`, category: 'people', icon: race, label: stats.label, hint: hints[race], radius: 0.6, holdPlacement: true,
       color: { human: '#a4d8ba', elf: '#9acb75', orc: '#7fa54e', dwarf: '#d6a878' }[race],
       creaturePlacement: (world, p) => {
         const point = world.findFreePosition(p, 0.6, !world.terrain.isLand(p.x, p.y));

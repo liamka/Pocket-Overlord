@@ -1,8 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { Renderer } from '../../src/render/renderer';
 import type { GameCommand } from '../../src/core/types';
+import type { InputController } from '../../src/input/controller';
 
-type InputGlobal = typeof globalThis & { inputFixture: { renderer: Renderer; commands: GameCommand[]; blocked: boolean; tool: string } };
+type InputGlobal = typeof globalThis & { inputFixture: { renderer: Renderer; commands: GameCommand[]; blocked: boolean; tool: string; placementSucceeds: boolean; manual: boolean; controller?: InputController } };
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/input-fixture', route => route.fulfill({ contentType: 'text/html', body: '<body style="margin:0"><canvas style="width:800px;height:600px" tabindex="0"></canvas></body>' }));
@@ -12,15 +13,16 @@ test.beforeEach(async ({ page }) => {
     const [{ InputController }, { Renderer }, { createRegistry }] = await Promise.all([import(inputPath), import(renderPath), import(contentPath)]);
     const renderer = new Renderer(document.querySelector('canvas')!);
     renderer.resize(); renderer.camera.fit(48, 48);
-    const fixture: InputGlobal['inputFixture'] = { renderer, commands: [], blocked: false, tool: 'core:human' };
+    const fixture: InputGlobal['inputFixture'] = { renderer, commands: [], blocked: false, tool: 'core:human', placementSucceeds: true, manual: false };
     (globalThis as InputGlobal).inputFixture = fixture;
     const registry = createRegistry();
     const controller = new InputController(renderer, {
       tool: () => registry.tools.get(fixture.tool), select: (id: string) => { fixture.tool = id; }, tools: () => registry.tools.values(),
-      dispatch: (command: GameCommand) => fixture.commands.push(command), togglePause: () => {}, stepSpeed: () => {},
+      dispatch: (command: GameCommand) => { fixture.commands.push(command); return fixture.placementSucceeds; }, togglePause: () => {}, stepSpeed: () => {},
       dimensions: () => ({ x: 48, y: 48 }), blocked: () => fixture.blocked, cameraChanged: () => {},
     });
-    const update = (now: number): void => { controller.update(now); requestAnimationFrame(update); };
+    fixture.controller = controller;
+    const update = (now: number): void => { if (!fixture.manual) controller.update(now); requestAnimationFrame(update); };
     requestAnimationFrame(update);
   });
 });
@@ -44,17 +46,19 @@ test('summoning captures the current screen corners after zooming and panning', 
 });
 
 test('applies one tool on release and tolerates small click movements', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:dynamite'; });
   const before = await state(page);
   await page.mouse.move(400, 250); await page.mouse.down();
   expect((await state(page)).commands).toHaveLength(0);
   await page.mouse.move(402, 251); await page.mouse.up();
   const after = await state(page);
   expect(after.commands).toHaveLength(1);
-  expect(after.commands[0]).toMatchObject({ kind: 'use-tool', toolId: 'core:human' });
+  expect(after.commands[0]).toMatchObject({ kind: 'use-tool', toolId: 'core:dynamite' });
   expect([after.x, after.y]).toEqual([before.x, before.y]);
 });
 
 test('left, middle and right dragging pan without applying tools or clicks on release', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:dynamite'; });
   for (const button of ['left', 'middle', 'right'] as const) {
     const before = await state(page);
     await page.mouse.move(350, 250); await page.mouse.down({ button });
@@ -69,6 +73,51 @@ test('left, middle and right dragging pan without applying tools or clicks on re
     await page.mouse.move(450, 300);
     expect(await state(page)).toEqual(after);
   }
+});
+
+for (const race of ['human', 'elf', 'orc', 'dwarf']) {
+  test(`${race} appears immediately and repeats while held, counting successful placements`, async ({ page }) => {
+    await page.evaluate(race => { (globalThis as InputGlobal).inputFixture.tool = `core:${race}`; }, race);
+    const before = await state(page);
+    await page.mouse.move(350, 250); await page.mouse.down();
+    expect((await state(page)).commands).toHaveLength(1);
+    expect(await page.evaluate(() => (globalThis as InputGlobal).inputFixture.renderer.placementCount)).toBe(1);
+    await page.mouse.move(420, 280);
+    await expect.poll(async () => (await state(page)).commands.length).toBeGreaterThan(1);
+    const held = await state(page);
+    expect([held.x, held.y]).toEqual([before.x, before.y]);
+    const snapshot = await page.evaluate(() => {
+      const fixture = (globalThis as InputGlobal).inputFixture;
+      fixture.placementSucceeds = false;
+      return { count: fixture.renderer.placementCount, commands: fixture.commands.length };
+    });
+    expect(snapshot.count).toBe(snapshot.commands);
+    await expect.poll(async () => (await state(page)).commands.length).toBeGreaterThan(snapshot.commands);
+    expect(await page.evaluate(() => (globalThis as InputGlobal).inputFixture.renderer.placementCount)).toBe(snapshot.count);
+    await page.mouse.up();
+    expect(await page.evaluate(() => (globalThis as InputGlobal).inputFixture.renderer.placementCount)).toBeUndefined();
+    const stopped = (await state(page)).commands.length;
+    await page.waitForTimeout(120);
+    expect((await state(page)).commands).toHaveLength(stopped);
+  });
+}
+
+test('held placements double every two seconds and restart on the next press', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.manual = true; });
+  await page.mouse.move(350, 250); await page.mouse.down();
+  const counts = await page.evaluate(() => {
+    const fixture = (globalThis as InputGlobal).inputFixture;
+    const controller = fixture.controller!;
+    const started = (controller as unknown as { gesture: { started: number } }).gesture.started;
+    return [499, 999, 1999, 2999, 3999, 4999, 5999].map(ms => {
+      controller.update(started + ms);
+      return { commands: fixture.commands.length, count: fixture.renderer.placementCount };
+    });
+  });
+  expect(counts).toEqual([1, 2, 4, 8, 12, 20, 28].map(count => ({ commands: count, count })));
+  await page.mouse.up(); await page.mouse.down();
+  expect(await page.evaluate(() => (globalThis as InputGlobal).inputFixture.renderer.placementCount)).toBe(1);
+  await page.mouse.up();
 });
 
 test('thunderstorm activates during a stationary hold and stops when dragging begins', async ({ page }) => {
@@ -152,6 +201,7 @@ test('changing speed and pausing preserve a held Hammer of Dawn until mouse rele
 });
 
 test('blur and blocking a gesture cancel it without applying the selected tool', async ({ page }) => {
+  await page.evaluate(() => { (globalThis as InputGlobal).inputFixture.tool = 'core:dynamite'; });
   await page.mouse.move(350, 250); await page.mouse.down();
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await page.mouse.up();

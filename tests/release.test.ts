@@ -77,6 +77,9 @@ if (command === 'git') {
       state.itchFailedOnce = true; save(); fail();
     }
     if (!fs.existsSync(args[1])) throw new Error('Missing release archive');
+    if (args.includes('--if-changed') && fs.statSync(args[1]).isFile()) {
+      throw new Error('butler --if-changed does not support ZIP archives');
+    }
   } else throw new Error('Unexpected butler command');
 }
 `;
@@ -257,7 +260,7 @@ describe('make release', () => {
     expect(notes).not.toContain('Older change.');
     const itch = commands.findIndex(command => command[0] === 'butler' && command[1] === 'push');
     expect(itch).toBeGreaterThan(create);
-    expect(commands[itch]).toEqual(['butler', 'push', join(directory, name), 'liamka/pocket-overlord:html5', '--userversion', '234', '--if-changed']);
+    expect(commands[itch]).toEqual(['butler', 'push', join(directory, name), 'liamka/pocket-overlord:html5', '--userversion', '234']);
     const html = spawnSync('unzip', ['-p', join(directory, name), 'index.html'], { encoding: 'utf8' });
     expect(html.stdout).toContain('src="./game.js"');
   });
@@ -321,7 +324,7 @@ describe('make release', () => {
     expect(readFileSync(archive)).toEqual(before);
     expect(test.commands().slice(commandCount)).toEqual([
       ['butler', 'status', 'liamka/pocket-overlord:html5'],
-      ['butler', 'push', archive, 'liamka/pocket-overlord:html5', '--userversion', '235', '--if-changed'],
+      ['butler', 'push', archive, 'liamka/pocket-overlord:html5', '--userversion', '235'],
     ]);
     expect(JSON.parse(readFileSync(join(test.directory, 'package.json'), 'utf8')).version).toBe('235');
   });
